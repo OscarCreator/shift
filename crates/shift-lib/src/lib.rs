@@ -58,13 +58,25 @@ impl Display for Task {
     }
 }
 
-struct ShiftDb {}
+#[derive(Debug, Default)]
+pub struct Config {
+    pub uid: Option<String>,
+    pub from: Option<DateTime<Utc>>,
+    pub to: Option<DateTime<Utc>>,
+    pub tasks: Vec<String>,
+    pub count: usize,
+}
 
-impl ShiftDb {
-    // for test's use inmemory datebase
-    // use ~/.local/share/shift/ for database?
-    fn connection() -> anyhow::Result<Connection> {
-        let conn = Connection::open(Path::new(env!("CARGO_MANIFEST_DIR")).join("tasks.db"))?;
+pub struct Shift {
+    conn: Connection,
+}
+
+impl Shift {
+    pub fn new<P>(path: P) -> Self
+    where
+        P: AsRef<Path>,
+    {
+        let conn = Connection::open(path).expect("could not open database");
         conn.execute(
             "
             CREATE TABLE IF NOT EXISTS tasks (
@@ -75,91 +87,123 @@ impl ShiftDb {
             )
             ",
             (),
+        )
+        .expect("could not start database connection");
+        Self { conn }
+    }
+
+    // https://serde.rs/custom-date-format.html
+
+    pub fn start(&self, task_name: &str) -> anyhow::Result<()> {
+        let task = Task::new(task_name.to_string());
+
+        self.conn.execute(
+            "INSERT INTO tasks VALUES (?1, ?2, ?3, ?4)",
+            params![task.id.to_string(), task.name, task.start, task.stop],
         )?;
-        Ok(conn)
+        Ok(())
+    }
+
+    // Get curret ongoing task(s)
+    pub fn status(&self, _args: &Config) -> anyhow::Result<()> {
+        let query = "SELECT * FROM tasks WHERE stop IS NULL";
+
+        let mut stmt = self.conn.prepare(query)?;
+        let task_iter = stmt.query_map([], |row| Task::try_from(row))?;
+        task_iter.for_each(|t| {
+            if let Ok(task) = t {
+                println!("{task}");
+            }
+        });
+        Ok(())
+    }
+
+    // TODO add options to function
+    pub fn log(&self, args: &Config) -> anyhow::Result<Vec<Task>> {
+        // show all task
+
+        let query = "SELECT * FROM tasks ORDER BY start DESC LIMIT ?";
+        let mut stmt = self.conn.prepare(query)?;
+        let task_iter = stmt.query_map([args.count], |row| Task::try_from(row))?;
+
+        // should never contain errors
+        //for task in task_iter.flatten() {
+        //    println!("{task}");
+        //}
+        Ok(task_iter.flatten().collect::<Vec<Task>>())
+    }
+
+    // TODO stop task, e.g update database
+    pub fn stop(&self, args: &Config) -> anyhow::Result<()> {
+        let query = "SELECT * FROM tasks WHERE stop IS NULL";
+        let mut stmt = self.conn.prepare(query)?;
+        let task_iter = stmt.query_map([], |row| Task::try_from(row))?;
+
+        match &args.uid {
+            Some(id) => {
+                self.conn.execute(
+                    "
+                    UPDATE tasks 
+                    SET stop = ?1
+                    WHERE id LIKE ?2
+                    ",
+                    params![DateTime::<Utc>::from(Local::now()), format!("%{id}")],
+                )?;
+            }
+            None if task_iter.count() == 1 => {
+                self.conn.execute(
+                    "UPDATE tasks SET stop = ?1 WHERE stop IS NULL",
+                    params![DateTime::<Utc>::from(Local::now())],
+                )?;
+            }
+            // TODO other kinds of error types which maps to cli options?
+            None => return Err(anyhow!("Need to specify id")),
+        }
+
+        Ok(())
     }
 }
 
-// https://serde.rs/custom-date-format.html
+#[cfg(test)]
+mod test {
+    use crate::{Config, Shift};
 
-pub fn start(task_name: &str) -> anyhow::Result<()> {
-    let task = Task::new(task_name.to_string());
-    let conn = ShiftDb::connection()?;
+    #[test]
+    fn log_count_limit() {
+        let s = Shift::new("");
 
-    conn.execute(
-        "INSERT INTO tasks VALUES (?1, ?2, ?3, ?4)",
-        params![task.id.to_string(), task.name, task.start, task.stop],
-    )?;
-    Ok(())
-}
-
-#[derive(Debug, Default)]
-pub struct Config {
-    pub uid: Option<String>,
-    pub from: Option<DateTime<Utc>>,
-    pub to: Option<DateTime<Utc>>,
-    pub tasks: Vec<String>,
-    pub count: usize,
-}
-
-// Get curret ongoing task(s)
-pub fn status(_args: &Config) -> anyhow::Result<()> {
-    let conn = ShiftDb::connection()?;
-    let query = "SELECT * FROM tasks WHERE stop IS NULL";
-
-    let mut stmt = conn.prepare(query)?;
-    let task_iter = stmt.query_map([], |row| Task::try_from(row))?;
-    task_iter.for_each(|t| {
-        if let Ok(task) = t {
-            println!("{task}");
+        for i in 0..100 {
+            s.start(&format!("task{}", i)).unwrap();
         }
-    });
-    Ok(())
-}
 
-// TODO add options to function
-pub fn log(args: &Config) -> anyhow::Result<Vec<Task>> {
-    // show all task
-
-    let conn = ShiftDb::connection()?;
-    let query = "SELECT * FROM tasks ORDER BY start DESC LIMIT ?";
-    let mut stmt = conn.prepare(query)?;
-    let task_iter = stmt.query_map([args.count], |row| Task::try_from(row))?;
-
-    // should never contain errors
-    //for task in task_iter.flatten() {
-    //    println!("{task}");
-    //}
-    Ok(task_iter.flatten().collect::<Vec<Task>>())
-}
-
-// TODO stop task, e.g update database
-pub fn stop(args: &Config) -> anyhow::Result<()> {
-    let conn = ShiftDb::connection()?;
-    let query = "SELECT * FROM tasks WHERE stop IS NULL";
-    let mut stmt = conn.prepare(query)?;
-    let task_iter = stmt.query_map([], |row| Task::try_from(row))?;
-
-    match &args.uid {
-        Some(id) => {
-            conn.execute(
-                "
-                UPDATE tasks 
-                SET stop = ?1
-                WHERE id LIKE ?2
-                ",
-                params![DateTime::<Utc>::from(Local::now()), format!("%{id}")],
-            )?;
-        }
-        None if task_iter.count() == 1 => {
-            conn.execute(
-                "UPDATE tasks SET stop = ?1 WHERE stop IS NULL",
-                params![DateTime::<Utc>::from(Local::now())],
-            )?;
-        }
-        // TODO other kinds of error types which maps to cli options?
-        None => return Err(anyhow!("Need to specify id")),
+        let config = Config {
+            count: 2,
+            ..Default::default()
+        };
+        let tasks = s.log(&config);
+        assert_eq!(tasks.unwrap().len(), 2);
     }
 
-    Ok(())
+    #[test]
+    fn log_desc() {
+        let s = Shift::new("");
+
+        for i in 0..100 {
+            s.start(&format!("task{}", i)).unwrap();
+        }
+
+        let config = Config {
+            count: 4,
+            ..Default::default()
+        };
+        let tasks = s.log(&config);
+        assert_eq!(
+            tasks
+                .unwrap()
+                .iter()
+                .map(|t| &t.name)
+                .collect::<Vec<&String>>(),
+            vec!["task99", "task98", "task97", "task96"]
+        );
+    }
 }

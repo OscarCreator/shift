@@ -1,6 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 use shift_lib::Config;
-use std::io::Write;
+use std::{io::Write, path::Path};
 
 #[derive(Parser)]
 #[command(author, version)]
@@ -62,19 +62,21 @@ struct LogArgs {
 fn main() {
     let cli = Cli::parse();
 
+    let shift = shift_lib::Shift::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("tasks.db"));
+
     match &cli.command {
         Commands::Status => {
             let config = shift_lib::Config {
                 uid: None,
                 ..Default::default()
             };
-            shift_lib::status(&config).unwrap_or_else(|err| {
+            shift.status(&config).unwrap_or_else(|err| {
                 eprintln!("{err}");
                 std::process::exit(1);
             });
         }
         Commands::Start { uid: name } => {
-            shift_lib::start(name).unwrap_or_else(|err| {
+            shift.start(name).unwrap_or_else(|err| {
                 eprintln!("{err}");
                 std::process::exit(1);
             });
@@ -85,7 +87,7 @@ fn main() {
                 uid: args.uid.clone(),
                 ..Default::default()
             };
-            shift_lib::stop(&config).unwrap_or_else(|err| {
+            shift.stop(&config).unwrap_or_else(|err| {
                 eprintln!("{err}");
                 std::process::exit(1);
             });
@@ -93,17 +95,18 @@ fn main() {
         Commands::Log(args) => {
             // TODO parse dates
 
-            let tasks = shift_lib::log(&Config {
-                from: None,
-                to: None,
-                tasks: args.task.clone(),
-                count: args.count,
-                ..Default::default()
-            })
-            .unwrap_or_else(|err| {
-                eprintln!("{err}");
-                std::process::exit(1);
-            });
+            let tasks = shift
+                .log(&Config {
+                    from: None,
+                    to: None,
+                    tasks: args.task.clone(),
+                    count: args.count,
+                    ..Default::default()
+                })
+                .unwrap_or_else(|err| {
+                    eprintln!("{err}");
+                    std::process::exit(1);
+                });
 
             if args.json {
                 let stdout = std::io::stdout();
