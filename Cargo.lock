@@ -399,6 +399,7 @@ dependencies = [
  "anyhow",
  "clap",
  "rusqlite",
+ "serde_json",
  "shift-lib",
 ]
 

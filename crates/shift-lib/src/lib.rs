@@ -5,13 +5,13 @@ use std::{
 
 use anyhow::anyhow;
 use chrono::{DateTime, Local, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Task {
-    id: Uuid,
+    id: String,
     name: String,
 
     start: DateTime<Utc>,
@@ -22,11 +22,24 @@ pub struct Task {
 impl Task {
     fn new(name: String) -> Self {
         Self {
-            id: Uuid::now_v7(),
+            id: Uuid::now_v7().to_string(),
             name,
             start: DateTime::from(Local::now()),
             stop: None,
         }
+    }
+}
+
+impl<'a> TryFrom<&Row<'a>> for Task {
+    type Error = rusqlite::Error;
+
+    fn try_from(value: &Row) -> Result<Self, Self::Error> {
+        Ok(Task {
+            id: value.get(0)?,
+            name: value.get(1)?,
+            start: value.get(2)?,
+            stop: value.get(3)?,
+        })
     }
 }
 
@@ -80,9 +93,13 @@ pub fn start(task_name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Default)]
 pub struct Config {
-    pub json: bool,
-    pub uuid: Option<String>,
+    pub uid: Option<String>,
+    pub from: Option<DateTime<Utc>>,
+    pub to: Option<DateTime<Utc>>,
+    pub tasks: Vec<String>,
+    pub count: u32,
 }
 
 // Get curret ongoing task(s)
@@ -91,14 +108,7 @@ pub fn status(_args: &Config) -> anyhow::Result<()> {
     let query = "SELECT * FROM tasks WHERE stop IS NULL";
 
     let mut stmt = conn.prepare(query)?;
-    let task_iter = stmt.query_map([], |row| {
-        Ok(Task {
-            id: Uuid::parse_str(&row.get::<usize, String>(0)?).unwrap(),
-            name: row.get(1)?,
-            start: row.get(2)?,
-            stop: row.get(3)?,
-        })
-    })?;
+    let task_iter = stmt.query_map([], |row| Task::try_from(row))?;
     task_iter.for_each(|t| {
         if let Ok(task) = t {
             println!("{task}");
@@ -108,26 +118,19 @@ pub fn status(_args: &Config) -> anyhow::Result<()> {
 }
 
 // TODO add options to function
-pub fn log() -> anyhow::Result<()> {
+pub fn log(args: &Config) -> anyhow::Result<Vec<Task>> {
     // show all task
 
     let conn = ShiftDb::connection()?;
     let query = "SELECT * FROM tasks";
     let mut stmt = conn.prepare(query)?;
-    let task_iter = stmt.query_map([], |row| {
-        Ok(Task {
-            id: Uuid::parse_str(&row.get::<usize, String>(0)?).unwrap(),
-            name: row.get(1)?,
-            start: row.get(2)?,
-            stop: row.get(3)?,
-        })
-    })?;
+    let task_iter = stmt.query_map([], |row| Task::try_from(row))?;
 
     // should never contain errors
-    for task in task_iter.flatten() {
-        println!("{task}");
-    }
-    Ok(())
+    //for task in task_iter.flatten() {
+    //    println!("{task}");
+    //}
+    Ok(task_iter.flatten().collect::<Vec<Task>>())
 }
 
 // TODO stop task, e.g update database
@@ -135,16 +138,9 @@ pub fn stop(args: &Config) -> anyhow::Result<()> {
     let conn = ShiftDb::connection()?;
     let query = "SELECT * FROM tasks WHERE stop IS NULL";
     let mut stmt = conn.prepare(query)?;
-    let task_iter = stmt.query_map([], |row| {
-        Ok(Task {
-            id: Uuid::parse_str(&row.get::<usize, String>(0)?).unwrap(),
-            name: row.get(1)?,
-            start: row.get(2)?,
-            stop: row.get(3)?,
-        })
-    })?;
+    let task_iter = stmt.query_map([], |row| Task::try_from(row))?;
 
-    match &args.uuid {
+    match &args.uid {
         Some(id) => {
             conn.execute(
                 "
