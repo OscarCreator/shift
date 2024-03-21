@@ -1,8 +1,6 @@
-use std::{io::Write, os::unix::process};
-
-use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use shift_lib::Config;
+use std::io::Write;
 
 #[derive(Parser)]
 #[command(author, version)]
@@ -54,7 +52,7 @@ struct LogArgs {
                      first and from the time of --from and forward in time if \
                      it's specified."
     )]
-    count: u32,
+    count: usize,
 
     /// Output as json
     #[arg(short, long)]

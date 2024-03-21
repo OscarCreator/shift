@@ -99,7 +99,7 @@ pub struct Config {
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
     pub tasks: Vec<String>,
-    pub count: u32,
+    pub count: usize,
 }
 
 // Get curret ongoing task(s)
@@ -122,9 +122,9 @@ pub fn log(args: &Config) -> anyhow::Result<Vec<Task>> {
     // show all task
 
     let conn = ShiftDb::connection()?;
-    let query = "SELECT * FROM tasks";
+    let query = "SELECT * FROM tasks ORDER BY start DESC LIMIT ?";
     let mut stmt = conn.prepare(query)?;
-    let task_iter = stmt.query_map([], |row| Task::try_from(row))?;
+    let task_iter = stmt.query_map([args.count], |row| Task::try_from(row))?;
 
     // should never contain errors
     //for task in task_iter.flatten() {
