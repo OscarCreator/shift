@@ -57,6 +57,10 @@ struct LogArgs {
     /// Output as json
     #[arg(short, long)]
     json: bool,
+
+    /// Show all tasks
+    #[arg(short, long)]
+    all: bool,
 }
 
 fn main() {
@@ -96,11 +100,12 @@ fn main() {
             // TODO parse dates
 
             let tasks = shift
-                .log(&Config {
+                .tasks(&Config {
                     from: None,
                     to: None,
                     tasks: args.task.clone(),
                     count: args.count,
+                    all: args.all,
                     ..Default::default()
                 })
                 .unwrap_or_else(|err| {
@@ -112,7 +117,7 @@ fn main() {
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();
                 handle
-                    .write(
+                    .write_all(
                         serde_json::to_string(&tasks)
                             .expect("could not deserialize tasks")
                             .as_bytes(),

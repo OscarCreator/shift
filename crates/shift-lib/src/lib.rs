@@ -15,7 +15,6 @@ pub struct Task {
     name: String,
 
     start: DateTime<Utc>,
-    // https://serde.rs/field-attrs.html
     stop: Option<DateTime<Utc>>,
 }
 
@@ -65,6 +64,7 @@ pub struct Config {
     pub to: Option<DateTime<Utc>>,
     pub tasks: Vec<String>,
     pub count: usize,
+    pub all: bool,
 }
 
 pub struct Shift {
@@ -118,18 +118,17 @@ impl Shift {
         Ok(())
     }
 
-    // TODO add options to function
-    pub fn log(&self, args: &Config) -> anyhow::Result<Vec<Task>> {
-        // show all task
-
+    /// Retrieve the tasks from the database
+    pub fn tasks(&self, args: &Config) -> anyhow::Result<Vec<Task>> {
         let query = "SELECT * FROM tasks ORDER BY start DESC LIMIT ?";
         let mut stmt = self.conn.prepare(query)?;
-        let task_iter = stmt.query_map([args.count], |row| Task::try_from(row))?;
+        let row_to_task = |row: &Row<'_>| Task::try_from(row);
+        let task_iter = if args.all {
+            stmt.query_map([-1], row_to_task)?
+        } else {
+            stmt.query_map([args.count], row_to_task)?
+        };
 
-        // should never contain errors
-        //for task in task_iter.flatten() {
-        //    println!("{task}");
-        //}
         Ok(task_iter.flatten().collect::<Vec<Task>>())
     }
 
@@ -180,7 +179,7 @@ mod test {
             count: 2,
             ..Default::default()
         };
-        let tasks = s.log(&config);
+        let tasks = s.tasks(&config);
         assert_eq!(tasks.unwrap().len(), 2);
     }
 
@@ -196,7 +195,7 @@ mod test {
             count: 4,
             ..Default::default()
         };
-        let tasks = s.log(&config);
+        let tasks = s.tasks(&config);
         assert_eq!(
             tasks
                 .unwrap()
@@ -205,5 +204,22 @@ mod test {
                 .collect::<Vec<&String>>(),
             vec!["task99", "task98", "task97", "task96"]
         );
+    }
+
+    #[test]
+    fn log_all() {
+        let s = Shift::new("");
+
+        for i in 0..100 {
+            s.start(&format!("task{}", i)).unwrap();
+        }
+
+        let config = Config {
+            count: 4,
+            all: true,
+            ..Default::default()
+        };
+        let tasks = s.tasks(&config);
+        assert_eq!(tasks.unwrap().len(), 100);
     }
 }
