@@ -1,6 +1,10 @@
+use chrono::{
+    offset::LocalResult, DateTime, Local, MappedLocalTime, NaiveDateTime, NaiveTime, TimeZone,
+    Timelike, Utc,
+};
 use clap::{Args, Parser, Subcommand};
 use shift_lib::Config;
-use std::{io::Write, path::Path};
+use std::{io::Write, path::Path, str::FromStr, time::SystemTime};
 
 #[derive(Parser)]
 #[command(author, version)]
@@ -97,11 +101,17 @@ fn main() {
             });
         }
         Commands::Log(args) => {
-            // TODO parse dates
+            let from_time = match &args.from {
+                Some(t) => Some(to_date(&t).ok().unwrap_or_else(|| {
+                    eprintln!("Could not parse time '{}'", t);
+                    std::process::exit(1);
+                })),
+                None => None,
+            };
 
             let tasks = shift
                 .tasks(&Config {
-                    from: None,
+                    from: from_time,
                     to: None,
                     tasks: args.task.clone(),
                     count: args.count,
@@ -134,4 +144,25 @@ fn main() {
         Commands::Pause { uid: _ } => todo!(),
         Commands::Resume { uid: _ } => todo!(),
     }
+}
+
+fn to_date(s: &String) -> anyhow::Result<DateTime<Local>> {
+    let time_formats = vec!["%H:%M", "%H:%M:%S"];
+    for f in time_formats {
+        if let Ok(nt) = NaiveTime::parse_from_str(s, f) {
+            if let LocalResult::Single(d) = Local::now().with_time(nt) {
+                return Ok(d);
+            }
+        }
+    }
+    let date_formats = vec!["%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"];
+    for f in date_formats {
+        if let Ok(dt) = NaiveDateTime::parse_from_str(s, f) {
+            if let LocalResult::Single(d) = Local.from_local_datetime(&dt) {
+                return Ok(d);
+            }
+        }
+    }
+
+    anyhow::bail!("could not parse time")
 }
