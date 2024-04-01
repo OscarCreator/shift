@@ -66,6 +66,7 @@ pub struct Config {
     pub tasks: Vec<String>,
     pub count: usize,
     pub all: bool,
+    pub start_time: Option<DateTime<Local>>,
 }
 
 pub struct Shift {
@@ -108,8 +109,11 @@ impl Shift {
 
     // https://serde.rs/custom-date-format.html
 
-    pub fn start(&self, task_name: &str) -> anyhow::Result<()> {
-        let task = Task::new(task_name.to_string());
+    pub fn start(&self, args: &Config) -> anyhow::Result<()> {
+        let mut task = Task::new(args.uid.clone().expect("Required to specify task name"));
+        if let Some(start_time) = args.start_time {
+            task.start = start_time.into()
+        }
 
         self.conn.execute(
             "INSERT INTO tasks VALUES (?1, ?2, ?3, ?4)",
@@ -228,20 +232,50 @@ impl Shift {
 
 #[cfg(test)]
 mod test {
+    use chrono::{DateTime, Local, Utc};
+
     use crate::{Config, Shift, StopError};
+
+    fn start_with_name(shift: &Shift, s: String) {
+        let config = Config {
+            uid: Some(s),
+            ..Default::default()
+        };
+        shift.start(&config).unwrap()
+    }
+
+    #[test]
+    fn start_time() {
+        let s = Shift::new("");
+
+        let time = DateTime::from(Local::now());
+        let config = Config {
+            uid: Some("task1".to_string()),
+            start_time: Some(time),
+            ..Default::default()
+        };
+        s.start(&config).unwrap();
+
+        let config = Config {
+            count: 50,
+            ..Default::default()
+        };
+        let tasks = s.tasks(&config);
+        assert_eq!(tasks.unwrap()[0].start, time, "Start time not handled");
+    }
 
     #[test]
     fn log_count_limit() {
         let s = Shift::new("");
 
         for i in 0..100 {
-            s.start(&format!("task{}", i)).unwrap();
+            start_with_name(&s, format!("task{}", i));
         }
-
         let config = Config {
             count: 2,
             ..Default::default()
         };
+
         let tasks = s.tasks(&config);
         assert_eq!(tasks.unwrap().len(), 2);
     }
@@ -251,7 +285,7 @@ mod test {
         let s = Shift::new("");
 
         for i in 0..100 {
-            s.start(&format!("task{}", i)).unwrap();
+            start_with_name(&s, format!("task{}", i));
         }
 
         let config = Config {
@@ -274,7 +308,7 @@ mod test {
         let s = Shift::new("");
 
         for i in 0..100 {
-            s.start(&format!("task{}", i)).unwrap();
+            start_with_name(&s, format!("task{}", i));
         }
 
         let config = Config {
@@ -291,7 +325,7 @@ mod test {
         let s = Shift::new("");
 
         for i in 0..100 {
-            s.start(&format!("task{}", i)).unwrap();
+            start_with_name(&s, format!("task{}", i));
         }
 
         let config = Config {
@@ -313,7 +347,7 @@ mod test {
         let s = Shift::new("");
 
         for i in 0..100 {
-            s.start(&format!("task{}", i)).unwrap();
+            start_with_name(&s, format!("task{}", i));
         }
 
         let config = Config {
@@ -339,7 +373,7 @@ mod test {
     fn stop() {
         let s = Shift::new("");
 
-        s.start("task1").unwrap();
+        start_with_name(&s, "task1".to_string());
 
         let config = Config {
             count: 10,
@@ -356,8 +390,8 @@ mod test {
     fn stop_error_multiple_tasks() {
         let s = Shift::new("");
 
-        s.start("task1").unwrap();
-        s.start("task2").unwrap();
+        start_with_name(&s, "task1".to_string());
+        start_with_name(&s, "task2".to_string());
 
         let config = Config {
             count: 10,
@@ -379,8 +413,8 @@ mod test {
     fn stop_all() {
         let s = Shift::new("");
 
-        s.start("task1").unwrap();
-        s.start("task2").unwrap();
+        start_with_name(&s, "task1".to_string());
+        start_with_name(&s, "task2".to_string());
 
         let config = Config {
             all: true,

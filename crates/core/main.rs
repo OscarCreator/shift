@@ -17,13 +17,23 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Status,
-    Start { uid: String },
+    Start(StartArgs),
     Stop(StopArgs),
     Log(LogArgs),
     Switch { uid: String },
     Remove { uid: String },
     Pause { uid: String },
     Resume { uid: String },
+}
+
+#[derive(Args)]
+struct StartArgs {
+    /// Name of task
+    name: String,
+
+    /// Start time instead of task
+    #[arg(short, long)]
+    at: Option<String>,
 }
 
 #[derive(Args)]
@@ -87,8 +97,19 @@ fn main() {
                 std::process::exit(1);
             });
         }
-        Commands::Start { uid: name } => {
-            shift.start(name).unwrap_or_else(|err| {
+        Commands::Start(args) => {
+            let start_time = args.at.as_ref().map(|t| {
+                to_date(t).ok().unwrap_or_else(|| {
+                    eprintln!("Could not parse --at time '{}'", t);
+                    std::process::exit(1);
+                })
+            });
+            let config = shift_lib::Config {
+                uid: Some(args.name.clone()),
+                start_time,
+                ..Default::default()
+            };
+            shift.start(&config).unwrap_or_else(|err| {
                 eprintln!("{err}");
                 std::process::exit(1);
             });
