@@ -1,10 +1,7 @@
-use chrono::{
-    offset::LocalResult, DateTime, Local, MappedLocalTime, NaiveDateTime, NaiveTime, TimeZone,
-    Timelike, Utc,
-};
+use chrono::{offset::LocalResult, DateTime, Local, NaiveDateTime, NaiveTime, TimeZone};
 use clap::{Args, Parser, Subcommand};
 use shift_lib::Config;
-use std::{io::Write, path::Path, str::FromStr, time::SystemTime};
+use std::{io::Write, path::Path};
 
 #[derive(Parser)]
 #[command(author, version)]
@@ -101,20 +98,18 @@ fn main() {
             });
         }
         Commands::Log(args) => {
-            let from_time = match &args.from {
-                Some(t) => Some(to_date(&t).ok().unwrap_or_else(|| {
+            let from_time = args.from.as_ref().map(|t| {
+                to_date(t).ok().unwrap_or_else(|| {
                     eprintln!("Could not parse --from time '{}'", t);
                     std::process::exit(1);
-                })),
-                None => None,
-            };
-            let to_time = match &args.to {
-                Some(t) => Some(to_date(&t).ok().unwrap_or_else(|| {
+                })
+            });
+            let to_time = args.to.as_ref().map(|t| {
+                to_date(t).ok().unwrap_or_else(|| {
                     eprintln!("Could not parse --to time '{}'", t);
                     std::process::exit(1);
-                })),
-                None => None,
-            };
+                })
+            });
 
             let tasks = shift
                 .tasks(&Config {
@@ -153,7 +148,7 @@ fn main() {
     }
 }
 
-fn to_date(s: &String) -> anyhow::Result<DateTime<Local>> {
+fn to_date(s: &str) -> anyhow::Result<DateTime<Local>> {
     let time_formats = vec!["%H:%M", "%H:%M:%S"];
     for f in time_formats {
         if let Ok(nt) = NaiveTime::parse_from_str(s, f) {
@@ -171,5 +166,5 @@ fn to_date(s: &String) -> anyhow::Result<DateTime<Local>> {
         }
     }
 
-    anyhow::bail!("could not parse time")
+    Err(anyhow::anyhow!("could not parse time"))
 }

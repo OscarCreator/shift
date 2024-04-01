@@ -127,7 +127,7 @@ impl Shift {
                 let query =
                     "SELECT * FROM tasks WHERE start > ? and start < ? ORDER BY start DESC LIMIT ?";
                 stmt = self.conn.prepare(query)?;
-                if args.all {
+                if args.all || !args.tasks.is_empty() {
                     stmt.query_map(params![from_date, to_date, -1], row_to_task)?
                 } else {
                     stmt.query_map(params![from_date, to_date, args.count], row_to_task)?
@@ -136,7 +136,7 @@ impl Shift {
             (None, Some(from_date)) => {
                 let query = "SELECT * FROM tasks WHERE start > ? ORDER BY start DESC LIMIT ?";
                 stmt = self.conn.prepare(query)?;
-                if args.all {
+                if args.all || !args.tasks.is_empty() {
                     stmt.query_map(params![from_date, -1], row_to_task)?
                 } else {
                     stmt.query_map(params![from_date, args.count], row_to_task)?
@@ -145,7 +145,7 @@ impl Shift {
             (Some(to_date), None) => {
                 let query = "SELECT * FROM tasks WHERE start < ? ORDER BY start DESC LIMIT ?";
                 stmt = self.conn.prepare(query)?;
-                if args.all {
+                if args.all || !args.tasks.is_empty() {
                     stmt.query_map(params![to_date, -1], row_to_task)?
                 } else {
                     stmt.query_map(params![to_date, args.count], row_to_task)?
@@ -154,14 +154,27 @@ impl Shift {
             (None, None) => {
                 let query = "SELECT * FROM tasks ORDER BY start DESC LIMIT ?";
                 stmt = self.conn.prepare(query)?;
-                if args.all {
+                if args.all || !args.tasks.is_empty() {
                     stmt.query_map([-1], row_to_task)?
                 } else {
                     stmt.query_map([args.count], row_to_task)?
                 }
             }
         };
-        Ok(task_iter.flatten().collect::<Vec<Task>>())
+
+        let iter = task_iter.flatten();
+        let res = if !args.tasks.is_empty() {
+            let filtered = iter.filter(|t| args.tasks.contains(&t.name));
+            if args.all {
+                filtered.collect::<Vec<Task>>()
+            } else {
+                filtered.take(args.count).collect::<Vec<Task>>()
+            }
+        } else {
+            iter.collect::<Vec<Task>>()
+        };
+
+        Ok(res)
     }
 
     // TODO stop task, e.g update database
@@ -253,5 +266,54 @@ mod test {
         };
         let tasks = s.tasks(&config);
         assert_eq!(tasks.unwrap().len(), 100);
+    }
+
+    #[test]
+    fn log_task() {
+        let s = Shift::new("");
+
+        for i in 0..100 {
+            s.start(&format!("task{}", i)).unwrap();
+        }
+
+        let config = Config {
+            count: 100,
+            tasks: vec!["task1".to_string(), "task2".to_string()],
+            ..Default::default()
+        };
+        let tasks = s.tasks(&config).expect("Should get task1 and task2");
+
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(
+            tasks.iter().map(|t| &t.name).collect::<Vec<&String>>(),
+            vec!["task2", "task1"]
+        )
+    }
+
+    #[test]
+    fn log_task_limit() {
+        let s = Shift::new("");
+
+        for i in 0..100 {
+            s.start(&format!("task{}", i)).unwrap();
+        }
+
+        let config = Config {
+            count: 3,
+            tasks: vec![
+                "task1".to_string(),
+                "task2".to_string(),
+                "task3".to_string(),
+                "task4".to_string(),
+            ],
+            ..Default::default()
+        };
+        let tasks = s.tasks(&config).expect("Should get task1 and task2");
+
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(
+            tasks.iter().map(|t| &t.name).collect::<Vec<&String>>(),
+            vec!["task4", "task3", "task2"]
+        )
     }
 }
