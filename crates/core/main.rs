@@ -103,7 +103,14 @@ fn main() {
         Commands::Log(args) => {
             let from_time = match &args.from {
                 Some(t) => Some(to_date(&t).ok().unwrap_or_else(|| {
-                    eprintln!("Could not parse time '{}'", t);
+                    eprintln!("Could not parse --from time '{}'", t);
+                    std::process::exit(1);
+                })),
+                None => None,
+            };
+            let to_time = match &args.to {
+                Some(t) => Some(to_date(&t).ok().unwrap_or_else(|| {
+                    eprintln!("Could not parse --to time '{}'", t);
                     std::process::exit(1);
                 })),
                 None => None,
@@ -112,7 +119,7 @@ fn main() {
             let tasks = shift
                 .tasks(&Config {
                     from: from_time,
-                    to: None,
+                    to: to_time,
                     tasks: args.task.clone(),
                     count: args.count,
                     all: args.all,

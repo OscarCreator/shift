@@ -120,32 +120,48 @@ impl Shift {
 
     /// Retrieve the tasks from the database
     pub fn tasks(&self, args: &Config) -> anyhow::Result<Vec<Task>> {
-        match args.from {
-            Some(from_date) => {
+        let row_to_task = |row: &Row<'_>| Task::try_from(row);
+        let mut stmt;
+        let task_iter = match (args.to, args.from) {
+            (Some(to_date), Some(from_date)) => {
+                let query =
+                    "SELECT * FROM tasks WHERE start > ? and start < ? ORDER BY start DESC LIMIT ?";
+                stmt = self.conn.prepare(query)?;
+                if args.all {
+                    stmt.query_map(params![from_date, to_date, -1], row_to_task)?
+                } else {
+                    stmt.query_map(params![from_date, to_date, args.count], row_to_task)?
+                }
+            }
+            (None, Some(from_date)) => {
                 let query = "SELECT * FROM tasks WHERE start > ? ORDER BY start DESC LIMIT ?";
-                let mut stmt = self.conn.prepare(query)?;
-                let row_to_task = |row: &Row<'_>| Task::try_from(row);
-                let task_iter = if args.all {
+                stmt = self.conn.prepare(query)?;
+                if args.all {
                     stmt.query_map(params![from_date, -1], row_to_task)?
                 } else {
                     stmt.query_map(params![from_date, args.count], row_to_task)?
-                };
-
-                Ok(task_iter.flatten().collect::<Vec<Task>>())
+                }
             }
-            None => {
+            (Some(to_date), None) => {
+                let query = "SELECT * FROM tasks WHERE start < ? ORDER BY start DESC LIMIT ?";
+                stmt = self.conn.prepare(query)?;
+                if args.all {
+                    stmt.query_map(params![to_date, -1], row_to_task)?
+                } else {
+                    stmt.query_map(params![to_date, args.count], row_to_task)?
+                }
+            }
+            (None, None) => {
                 let query = "SELECT * FROM tasks ORDER BY start DESC LIMIT ?";
-                let mut stmt = self.conn.prepare(query)?;
-                let row_to_task = |row: &Row<'_>| Task::try_from(row);
-                let task_iter = if args.all {
+                stmt = self.conn.prepare(query)?;
+                if args.all {
                     stmt.query_map([-1], row_to_task)?
                 } else {
                     stmt.query_map([args.count], row_to_task)?
-                };
-
-                Ok(task_iter.flatten().collect::<Vec<Task>>())
+                }
             }
-        }
+        };
+        Ok(task_iter.flatten().collect::<Vec<Task>>())
     }
 
     // TODO stop task, e.g update database
