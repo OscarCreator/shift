@@ -1,9 +1,10 @@
 use std::{
+    error::Error,
     fmt::{Display, Write},
     path::Path,
 };
 
-use anyhow::anyhow;
+use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
 use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
@@ -69,6 +70,19 @@ pub struct Config {
 
 pub struct Shift {
     conn: Connection,
+}
+
+#[derive(Debug)]
+pub enum StopError {
+    MultipleTasks(Vec<Task>),
+}
+
+impl Error for StopError {}
+
+impl Display for StopError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("hi")
+    }
 }
 
 impl Shift {
@@ -177,40 +191,44 @@ impl Shift {
         Ok(res)
     }
 
-    // TODO stop task, e.g update database
-    pub fn stop(&self, args: &Config) -> anyhow::Result<()> {
+    /// Update task with stop time
+    pub fn stop(&self, args: &Config) -> Result<(), StopError> {
         let query = "SELECT * FROM tasks WHERE stop IS NULL";
-        let mut stmt = self.conn.prepare(query)?;
-        let task_iter = stmt.query_map([], |row| Task::try_from(row))?;
+        let mut stmt = self.conn.prepare(query).expect("SQL statement is valid");
+        let tasks = stmt
+            .query_map([], |row| Task::try_from(row))
+            .expect("No parameters should always bind correctly")
+            .flatten()
+            .collect::<Vec<Task>>();
 
         match &args.uid {
             Some(id) => {
-                self.conn.execute(
-                    "
-                    UPDATE tasks 
-                    SET stop = ?1
-                    WHERE id LIKE ?2
-                    ",
-                    params![DateTime::<Utc>::from(Local::now()), format!("%{id}")],
-                )?;
+                self.conn
+                    .execute(
+                        "UPDATE tasks SET stop = ?1 WHERE id LIKE ?2",
+                        params![DateTime::<Utc>::from(Local::now()), format!("%{id}")],
+                    )
+                    .expect("SQL statement is valid");
             }
-            None if task_iter.count() == 1 => {
-                self.conn.execute(
-                    "UPDATE tasks SET stop = ?1 WHERE stop IS NULL",
-                    params![DateTime::<Utc>::from(Local::now())],
-                )?;
+            None if tasks.len() == 1 || args.all => {
+                self.conn
+                    .execute(
+                        "UPDATE tasks SET stop = ?1 WHERE stop IS NULL",
+                        params![DateTime::<Utc>::from(Local::now())],
+                    )
+                    .expect("SQL statement is vaild");
             }
-            // TODO other kinds of error types which maps to cli options?
-            None => return Err(anyhow!("Need to specify id")),
+            None => {
+                return Err(StopError::MultipleTasks(tasks));
+            }
         }
-
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{Config, Shift};
+    use crate::{Config, Shift, StopError};
 
     #[test]
     fn log_count_limit() {
@@ -315,5 +333,65 @@ mod test {
             tasks.iter().map(|t| &t.name).collect::<Vec<&String>>(),
             vec!["task4", "task3", "task2"]
         )
+    }
+
+    #[test]
+    fn stop() {
+        let s = Shift::new("");
+
+        s.start("task1").unwrap();
+
+        let config = Config {
+            count: 10,
+            ..Default::default()
+        };
+        s.stop(&config).expect("Should stop without error");
+        let tasks = s.tasks(&config).expect("Should get task1");
+
+        assert_eq!(tasks.len(), 1, "Didn't get expected amount of tasks");
+        assert!(tasks[0].stop != None, "the task stop field was not set")
+    }
+
+    #[test]
+    fn stop_error_multiple_tasks() {
+        let s = Shift::new("");
+
+        s.start("task1").unwrap();
+        s.start("task2").unwrap();
+
+        let config = Config {
+            count: 10,
+            ..Default::default()
+        };
+        let a = s.stop(&config).expect_err("Can't stop two tasks");
+        match a {
+            StopError::MultipleTasks(t) => {
+                assert_eq!(t.len(), 2, "Should get both task1 and task2");
+                assert_eq!(
+                    t.iter().map(|t| &t.name).collect::<Vec<&String>>(),
+                    vec!["task1", "task2"]
+                )
+            }
+        }
+    }
+
+    #[test]
+    fn stop_all() {
+        let s = Shift::new("");
+
+        s.start("task1").unwrap();
+        s.start("task2").unwrap();
+
+        let config = Config {
+            all: true,
+            ..Default::default()
+        };
+        s.stop(&config).expect("Can stop all");
+        let tasks = s.tasks(&config).expect("Should get task1 and task2");
+
+        assert_eq!(tasks.len(), 2, "Didn't get expected amount of tasks");
+        for t in tasks {
+            assert!(t.stop != None, "the task stop field was not set: {t:?}")
+        }
     }
 }
