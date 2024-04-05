@@ -20,10 +20,15 @@ enum Commands {
     Start(StartArgs),
     Stop(StopArgs),
     Log(LogArgs),
-    Switch { uid: String },
+    Switch(SwitchArgs),
     Remove { uid: String },
     Pause { uid: String },
     Resume { uid: String },
+}
+
+#[derive(Args)]
+struct SwitchArgs {
+    uid: String,
 }
 
 #[derive(Args)]
@@ -178,7 +183,25 @@ fn main() {
                 }
             }
         }
-        Commands::Switch { uid: _ } => todo!(),
+        Commands::Switch(args) => {
+            shift
+                .stop(&Config {
+                    ..Default::default()
+                })
+                .unwrap_or_else(|err| {
+                    eprintln!("{err}");
+                    std::process::exit(1);
+                });
+            shift
+                .start(&Config {
+                    uid: Some(args.uid.clone()),
+                    ..Default::default()
+                })
+                .unwrap_or_else(|err| {
+                    eprintln!("{err}");
+                    std::process::exit(1);
+                })
+        }
         Commands::Remove { uid: _ } => todo!(),
         Commands::Pause { uid: _ } => todo!(),
         Commands::Resume { uid: _ } => todo!(),
