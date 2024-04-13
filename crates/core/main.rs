@@ -16,13 +16,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Show current status
     Status,
+    /// Start a task
     Start(StartArgs),
+    /// Stop a task
     Stop(StopArgs),
+    /// Log tasks
     Log(LogArgs),
+    /// Switch to another task
     Switch(SwitchArgs),
+    /// TODO
     Remove { uid: String },
+    /// TODO
     Pause { uid: String },
+    /// TODO
     Resume { uid: String },
 }
 
@@ -44,8 +52,7 @@ struct StartArgs {
 #[derive(Args)]
 struct StopArgs {
     /// Name or uuid of task
-    #[arg(short, long)]
-    uid: Option<String>,
+    name: Option<String>,
 
     /// Stop all started tasks
     #[arg(short, long)]
@@ -121,7 +128,7 @@ fn main() {
         }
         Commands::Stop(args) => {
             let config = shift_lib::Config {
-                uid: args.uid.clone(),
+                uid: args.name.clone(),
                 all: args.all,
                 ..Default::default()
             };
@@ -131,9 +138,16 @@ fn main() {
                         for task in tasks {
                             eprintln!("{}", task);
                         }
-                        eprintln!(
-                            "Multiple tasks started. Need to specify a unique task with --uid"
-                        )
+                        eprintln!("Multiple tasks started. Need to specify a unique task or uuid")
+                    }
+                    shift_lib::StopError::UpdateError(task) => {
+                        eprintln!("Could not update ongoing task with name: {} ", task.name)
+                    }
+                    shift_lib::StopError::SqlError(err) => {
+                        eprintln!("SQL error: {}", err)
+                    }
+                    shift_lib::StopError::NoTasks => {
+                        eprintln!("No tasks to stop")
                     }
                 }
                 std::process::exit(1);

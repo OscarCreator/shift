@@ -10,13 +10,13 @@ use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Task {
     id: String,
-    name: String,
+    pub name: String,
 
-    start: DateTime<Utc>,
-    stop: Option<DateTime<Utc>>,
+    pub start: DateTime<Utc>,
+    pub stop: Option<DateTime<Utc>>,
 }
 
 impl Task {
@@ -76,6 +76,9 @@ pub struct Shift {
 #[derive(Debug)]
 pub enum StopError {
     MultipleTasks(Vec<Task>),
+    UpdateError(Task),
+    SqlError(String),
+    NoTasks,
 }
 
 impl Error for StopError {}
@@ -207,6 +210,34 @@ impl Shift {
 
         match &args.uid {
             Some(id) => {
+                let tasks_name_match = tasks
+                    .into_iter()
+                    .filter(|t| &t.name == id)
+                    .collect::<Vec<Task>>();
+                match tasks_name_match.len() {
+                    0 => return Err(StopError::NoTasks),
+                    1 => {
+                        if let Some(t) = tasks_name_match.first() {
+                            return match self.conn.execute(
+                                "UPDATE tasks SET stop = ?1 WHERE name = ?2 and stop IS NULL",
+                                params![DateTime::<Utc>::from(Local::now()), t.name],
+                            ) {
+                                Ok(count) => {
+                                    if count == 1 {
+                                        Ok(())
+                                    } else {
+                                        Err(StopError::UpdateError(t.clone()))
+                                    }
+                                }
+                                Err(err) => Err(StopError::SqlError(err.to_string())),
+                            };
+                        }
+                    }
+                    2.. => {
+                        return Err(StopError::MultipleTasks(tasks_name_match));
+                    }
+                }
+
                 self.conn
                     .execute(
                         "UPDATE tasks SET stop = ?1 WHERE id LIKE ?2",
@@ -222,9 +253,14 @@ impl Shift {
                     )
                     .expect("SQL statement is vaild");
             }
-            None => {
-                return Err(StopError::MultipleTasks(tasks));
-            }
+            None => match tasks.len() {
+                0 => {
+                    return Err(StopError::NoTasks);
+                }
+                _ => {
+                    return Err(StopError::MultipleTasks(tasks));
+                }
+            },
         }
         Ok(())
     }
@@ -406,6 +442,7 @@ mod test {
                     vec!["task1", "task2"]
                 )
             }
+            _ => panic!("error"),
         }
     }
 
