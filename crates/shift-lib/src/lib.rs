@@ -1,11 +1,11 @@
 use std::{
     error::Error,
-    fmt::{Display, Write},
+    fmt::{Binary, Display, Write},
     path::Path,
 };
 
 use anyhow::Result;
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Local, TimeDelta, Utc};
 use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -45,15 +45,35 @@ impl<'a> TryFrom<&Row<'a>> for Task {
 
 impl Display for Task {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.id.to_string())?;
-        f.write_char(',')?;
+        f.write_str(
+            self.id
+                .get(self.id.len() - 7..)
+                .expect("Could not get subslice of uuid"),
+        )?;
+        f.write_str("  ")?;
+        self.start.naive_local().date().fmt(f)?;
+        f.write_str(" ")?;
+        self.start.naive_local().format("%H:%M:%S").fmt(f)?;
+        if let Some(stop_time) = self.stop {
+            f.write_str(" to ")?;
+            if self.start.naive_local().date() != stop_time.naive_local().date() {
+                stop_time.naive_local().date().fmt(f)?;
+                f.write_str(" ")?;
+            }
+            stop_time.naive_local().format("%H:%M:%S").fmt(f)?;
+            f.write_str("  ")?;
+            let duration = stop_time - self.start;
+            if duration.num_hours() != 0 {
+                f.write_fmt(format_args!("{}h ", duration.num_hours()))?;
+            }
+            if duration.num_minutes() % 60 != 0 || duration.num_hours() != 0 {
+                f.write_fmt(format_args!("{}m ", duration.num_minutes() % 60))?;
+            }
+            f.write_fmt(format_args!("{}s", duration.num_seconds() % 60))?;
+        }
+
+        f.write_str("  ")?;
         f.write_str(&self.name)?;
-        f.write_char(',')?;
-        f.write_fmt(format_args!("{}", &self.start))?;
-        if let Some(stop) = &self.stop {
-            f.write_char(',')?;
-            f.write_fmt(format_args!("{stop}"))?;
-        };
         Ok(())
     }
 }
