@@ -1,97 +1,12 @@
-use clap::{Args, Parser, Subcommand};
+use clap::Parser;
+use cli::{Cli, Commands};
 use shift_lib::Config;
 use std::{io::Write, path::Path};
 
 use parse::to_date;
 
+mod cli;
 mod parse;
-
-#[derive(Parser)]
-#[command(author, version)]
-#[command(propagate_version = true)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Show current status
-    Status,
-    /// Start a task
-    Start(StartArgs),
-    /// Stop a task
-    Stop(StopArgs),
-    /// Log tasks
-    Log(LogArgs),
-    /// Switch to another task
-    Switch(SwitchArgs),
-    /// TODO
-    Remove { uid: String },
-    /// TODO
-    Pause { uid: String },
-    /// TODO
-    Resume { uid: String },
-}
-
-#[derive(Args)]
-struct SwitchArgs {
-    uid: String,
-}
-
-#[derive(Args)]
-struct StartArgs {
-    /// Name of task
-    name: String,
-
-    /// Start time instead of task
-    #[arg(short, long)]
-    at: Option<String>,
-}
-
-#[derive(Args)]
-struct StopArgs {
-    /// Name or uuid of task
-    name: Option<String>,
-
-    /// Stop all started tasks
-    #[arg(short, long)]
-    all: bool,
-}
-
-#[derive(Args)]
-struct LogArgs {
-    /// Search from time
-    #[arg(short, long)]
-    from: Option<String>,
-
-    /// Search to time
-    #[arg(long)]
-    to: Option<String>,
-
-    /// Task names
-    #[arg(short, long)]
-    task: Vec<String>,
-
-    #[arg(
-        short,
-        long,
-        default_value_t = 10,
-        help = "Show quantity of tasks",
-        long_help = "Max value of tasks displayed. Most recent tasks will be chosen \
-                     first and from the time of --from and forward in time if \
-                     it's specified."
-    )]
-    count: usize,
-
-    /// Output as json
-    #[arg(short, long)]
-    json: bool,
-
-    /// Show all tasks
-    #[arg(short, long)]
-    all: bool,
-}
 
 fn main() {
     let cli = Cli::parse();
@@ -112,7 +27,7 @@ fn main() {
         Commands::Start(args) => {
             let start_time = args.at.as_ref().map(|t| {
                 to_date(t).ok().unwrap_or_else(|| {
-                    eprintln!("Could not parse --at time '{}'", t);
+                    eprintln!("Could not parse --at time '{t}'");
                     std::process::exit(1);
                 })
             });
@@ -136,18 +51,18 @@ fn main() {
                 match err {
                     shift_lib::StopError::MultipleTasks(tasks) => {
                         for task in tasks {
-                            eprintln!("{}", task);
+                            eprintln!("{task}");
                         }
-                        eprintln!("Multiple tasks started. Need to specify a unique task or uuid")
+                        eprintln!("Multiple tasks started. Need to specify a unique task or uuid");
                     }
                     shift_lib::StopError::UpdateError(task) => {
-                        eprintln!("Could not update ongoing task with name: {} ", task.name)
+                        eprintln!("Could not update ongoing task with name: {} ", task.name);
                     }
                     shift_lib::StopError::SqlError(err) => {
-                        eprintln!("SQL error: {}", err)
+                        eprintln!("SQL error: {err}");
                     }
                     shift_lib::StopError::NoTasks => {
-                        eprintln!("No tasks to stop")
+                        eprintln!("No tasks to stop");
                     }
                 }
                 std::process::exit(1);
@@ -156,13 +71,13 @@ fn main() {
         Commands::Log(args) => {
             let from_time = args.from.as_ref().map(|t| {
                 to_date(t).ok().unwrap_or_else(|| {
-                    eprintln!("Could not parse --from time '{}'", t);
+                    eprintln!("Could not parse --from time '{t}'");
                     std::process::exit(1);
                 })
             });
             let to_time = args.to.as_ref().map(|t| {
                 to_date(t).ok().unwrap_or_else(|| {
-                    eprintln!("Could not parse --to time '{}'", t);
+                    eprintln!("Could not parse --to time '{t}'");
                     std::process::exit(1);
                 })
             });
@@ -214,10 +129,26 @@ fn main() {
                 .unwrap_or_else(|err| {
                     eprintln!("{err}");
                     std::process::exit(1);
-                })
+                });
         }
         Commands::Remove { uid: _ } => todo!(),
-        Commands::Pause { uid: _ } => todo!(),
-        Commands::Resume { uid: _ } => todo!(),
+        Commands::Pause(args) => shift
+            .pause(&Config {
+                uid: args.uid.clone(),
+                ..Default::default()
+            })
+            .unwrap_or_else(|err| {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }),
+        Commands::Resume(args) => shift
+            .resume(&Config {
+                uid: args.uid.clone(),
+                ..Default::default()
+            })
+            .unwrap_or_else(|err| {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }),
     }
 }
