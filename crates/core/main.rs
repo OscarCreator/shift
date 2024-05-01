@@ -27,7 +27,7 @@ fn main() {
         Commands::Start(args) => {
             let start_time = args.at.as_ref().map(|t| {
                 to_date(t).ok().unwrap_or_else(|| {
-                    eprintln!("Could not parse --at time '{}'", t);
+                    eprintln!("Could not parse --at time '{t}'");
                     std::process::exit(1);
                 })
             });
@@ -51,18 +51,18 @@ fn main() {
                 match err {
                     shift_lib::StopError::MultipleTasks(tasks) => {
                         for task in tasks {
-                            eprintln!("{}", task);
+                            eprintln!("{task}");
                         }
-                        eprintln!("Multiple tasks started. Need to specify a unique task or uuid")
+                        eprintln!("Multiple tasks started. Need to specify a unique task or uuid");
                     }
                     shift_lib::StopError::UpdateError(task) => {
-                        eprintln!("Could not update ongoing task with name: {} ", task.name)
+                        eprintln!("Could not update ongoing task with name: {} ", task.name);
                     }
                     shift_lib::StopError::SqlError(err) => {
-                        eprintln!("SQL error: {}", err)
+                        eprintln!("SQL error: {err}");
                     }
                     shift_lib::StopError::NoTasks => {
-                        eprintln!("No tasks to stop")
+                        eprintln!("No tasks to stop");
                     }
                 }
                 std::process::exit(1);
@@ -71,13 +71,13 @@ fn main() {
         Commands::Log(args) => {
             let from_time = args.from.as_ref().map(|t| {
                 to_date(t).ok().unwrap_or_else(|| {
-                    eprintln!("Could not parse --from time '{}'", t);
+                    eprintln!("Could not parse --from time '{t}'");
                     std::process::exit(1);
                 })
             });
             let to_time = args.to.as_ref().map(|t| {
                 to_date(t).ok().unwrap_or_else(|| {
-                    eprintln!("Could not parse --to time '{}'", t);
+                    eprintln!("Could not parse --to time '{t}'");
                     std::process::exit(1);
                 })
             });
