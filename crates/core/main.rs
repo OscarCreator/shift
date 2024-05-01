@@ -1,6 +1,15 @@
 use clap::Parser;
 use cli::{Cli, Commands};
-use shift_lib::Config;
+use shift_lib::{
+    commands::{
+        pause::{pause, resume},
+        start::start,
+        status::status,
+        stop::{stop, StopError},
+        tasks::tasks,
+    },
+    Config,
+};
 use std::{io::Write, path::Path};
 
 use parse::to_date;
@@ -11,7 +20,7 @@ mod parse;
 fn main() {
     let cli = Cli::parse();
 
-    let shift = shift_lib::Shift::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("tasks.db"));
+    let shift = shift_lib::ShiftDb::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("tasks.db"));
 
     match &cli.command {
         Commands::Status => {
@@ -19,7 +28,7 @@ fn main() {
                 uid: None,
                 ..Default::default()
             };
-            shift.status(&config).unwrap_or_else(|err| {
+            status(&shift, &config).unwrap_or_else(|err| {
                 eprintln!("{err}");
                 std::process::exit(1);
             });
@@ -36,7 +45,7 @@ fn main() {
                 start_time,
                 ..Default::default()
             };
-            shift.start(&config).unwrap_or_else(|err| {
+            start(&shift, &config).unwrap_or_else(|err| {
                 eprintln!("{err}");
                 std::process::exit(1);
             });
@@ -47,21 +56,21 @@ fn main() {
                 all: args.all,
                 ..Default::default()
             };
-            shift.stop(&config).unwrap_or_else(|err| {
+            stop(&shift, &config).unwrap_or_else(|err| {
                 match err {
-                    shift_lib::StopError::MultipleTasks(tasks) => {
+                    StopError::MultipleTasks(tasks) => {
                         for task in tasks {
                             eprintln!("{task}");
                         }
                         eprintln!("Multiple tasks started. Need to specify a unique task or uuid");
                     }
-                    shift_lib::StopError::UpdateError(task) => {
+                    StopError::UpdateError(task) => {
                         eprintln!("Could not update ongoing task with name: {} ", task.name);
                     }
-                    shift_lib::StopError::SqlError(err) => {
+                    StopError::SqlError(err) => {
                         eprintln!("SQL error: {err}");
                     }
-                    shift_lib::StopError::NoTasks => {
+                    StopError::NoTasks => {
                         eprintln!("No tasks to stop");
                     }
                 }
@@ -82,19 +91,21 @@ fn main() {
                 })
             });
 
-            let tasks = shift
-                .tasks(&Config {
+            let tasks = tasks(
+                &shift,
+                &Config {
                     from: from_time,
                     to: to_time,
                     tasks: args.task.clone(),
                     count: args.count,
                     all: args.all,
                     ..Default::default()
-                })
-                .unwrap_or_else(|err| {
-                    eprintln!("{err}");
-                    std::process::exit(1);
-                });
+                },
+            )
+            .unwrap_or_else(|err| {
+                eprintln!("{err}");
+                std::process::exit(1);
+            });
 
             if args.json {
                 let stdout = std::io::stdout();
@@ -113,42 +124,51 @@ fn main() {
             }
         }
         Commands::Switch(args) => {
-            shift
-                .stop(&Config {
+            stop(
+                &shift,
+                &Config {
                     ..Default::default()
-                })
-                .unwrap_or_else(|err| {
-                    eprintln!("{err}");
-                    std::process::exit(1);
-                });
-            shift
-                .start(&Config {
+                },
+            )
+            .unwrap_or_else(|err| {
+                eprintln!("{err}");
+                std::process::exit(1);
+            });
+
+            start(
+                &shift,
+                &Config {
                     uid: Some(args.uid.clone()),
                     ..Default::default()
-                })
-                .unwrap_or_else(|err| {
-                    eprintln!("{err}");
-                    std::process::exit(1);
-                });
+                },
+            )
+            .unwrap_or_else(|err| {
+                eprintln!("{err}");
+                std::process::exit(1);
+            });
         }
         Commands::Remove { uid: _ } => todo!(),
-        Commands::Pause(args) => shift
-            .pause(&Config {
+        Commands::Pause(args) => pause(
+            &shift,
+            &Config {
                 uid: args.uid.clone(),
                 ..Default::default()
-            })
-            .unwrap_or_else(|err| {
-                eprintln!("{err}");
-                std::process::exit(1);
-            }),
-        Commands::Resume(args) => shift
-            .resume(&Config {
+            },
+        )
+        .unwrap_or_else(|err| {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }),
+        Commands::Resume(args) => resume(
+            &shift,
+            &Config {
                 uid: args.uid.clone(),
                 ..Default::default()
-            })
-            .unwrap_or_else(|err| {
-                eprintln!("{err}");
-                std::process::exit(1);
-            }),
+            },
+        )
+        .unwrap_or_else(|err| {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }),
     }
 }
