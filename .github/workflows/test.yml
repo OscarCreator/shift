@@ -1,0 +1,23 @@
+name: Testing
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  
+jobs:
+  test:
+    name: cargo-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: install cargo
+        uses: dtolnay/rust-toolchain@stable
+      - name: restore cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-rust
+      - name: test
+        run: |
+          cargo t --all
