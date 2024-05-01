@@ -8,10 +8,16 @@ on:
 jobs:
   test:
     name: cargo-test
-    runs-on: ubutu-latest
+    runs-on: ubuntu-latest
     steps:
       - name: checkout
         uses: actions/checkout@v4
+      - name: install cargo
+        uses: dtolnay/rust-toolchain@stable
+      - name: restore cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-rust
       - name: test
         run: |
           cargo t --all
