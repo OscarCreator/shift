@@ -1,0 +1,17 @@
+name: Testing
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  
+jobs:
+  test:
+    name: cargo-test
+    runs-on: ubutu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: test
+        run: |
+          cargo t --all
