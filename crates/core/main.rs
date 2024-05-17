@@ -5,7 +5,7 @@ use shift_lib::{
         pause::{pause, resume},
         start::start,
         status::status,
-        stop::{stop, StopError},
+        stop::{self, stop},
         tasks::tasks,
     },
     Config,
@@ -58,19 +58,16 @@ fn main() {
             };
             stop(&shift, &config).unwrap_or_else(|err| {
                 match err {
-                    StopError::MultipleTasks(tasks) => {
+                    stop::Error::MultipleTasks(tasks) => {
                         for task in tasks {
                             eprintln!("{task}");
                         }
                         eprintln!("Multiple tasks started. Need to specify a unique task or uuid");
                     }
-                    StopError::UpdateError(task) => {
+                    stop::Error::UpdateError { count: _, task } => {
                         eprintln!("Could not update ongoing task with name: {} ", task.name);
                     }
-                    StopError::SqlError(err) => {
-                        eprintln!("SQL error: {err}");
-                    }
-                    StopError::NoTasks => {
+                    stop::Error::NoTasks => {
                         eprintln!("No tasks to stop");
                     }
                 }

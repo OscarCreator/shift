@@ -1,28 +1,21 @@
-use std::{error::Error, fmt::Display};
-
 use chrono::{DateTime, Local, Utc};
 use rusqlite::params;
+use thiserror::Error;
 
 use crate::{Config, ShiftDb, Task};
 
-#[derive(Debug)]
-pub enum StopError {
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Could not decide which task stop from {0:?}")]
     MultipleTasks(Vec<Task>),
-    UpdateError(Task),
-    SqlError(String),
+    #[error("Expected to update one task but updated {count} rows for {task}")]
+    UpdateError { count: usize, task: Task },
+    #[error("Could not find any tasks to stop")]
     NoTasks,
 }
 
-impl Error for StopError {}
-
-impl Display for StopError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("todo")
-    }
-}
-
 /// Update task with stop time
-pub fn stop(s: &ShiftDb, args: &Config) -> Result<(), StopError> {
+pub fn stop(s: &ShiftDb, args: &Config) -> Result<(), Error> {
     let query = "SELECT * FROM tasks WHERE stop IS NULL";
     let mut stmt = s.conn.prepare(query).expect("SQL statement is valid");
     let tasks = stmt
@@ -37,36 +30,30 @@ pub fn stop(s: &ShiftDb, args: &Config) -> Result<(), StopError> {
             match tasks_name_match.len() {
                 0 => {
                     dbg!(&tasks_name_match);
-                    return Err(StopError::NoTasks);
+                    return Err(Error::NoTasks);
                 }
                 1 => {
                     if let Some(t) = tasks_name_match.first() {
-                        return match s.conn.execute(
-                            "UPDATE tasks SET stop = ?1 WHERE name = ?2 and stop IS NULL",
-                            params![DateTime::<Utc>::from(Local::now()), t.name],
-                        ) {
-                            Ok(count) => {
-                                if count == 1 {
-                                    Ok(())
-                                } else {
-                                    Err(StopError::UpdateError(t.clone()))
-                                }
-                            }
-                            Err(err) => Err(StopError::SqlError(err.to_string())),
+                        return match s
+                            .conn
+                            .execute(
+                                "UPDATE tasks SET stop = ?1 WHERE name = ?2 and stop IS NULL",
+                                params![DateTime::<Utc>::from(Local::now()), t.name],
+                            )
+                            .expect("SQL statement is vaild")
+                        {
+                            1 => Ok(()),
+                            c => Err(Error::UpdateError {
+                                count: c,
+                                task: t.clone(),
+                            }),
                         };
                     }
                 }
                 2.. => {
-                    return Err(StopError::MultipleTasks(tasks_name_match));
+                    return Err(Error::MultipleTasks(tasks_name_match));
                 }
             }
-
-            s.conn
-                .execute(
-                    "UPDATE tasks SET stop = ?1 WHERE id LIKE ?2",
-                    params![DateTime::<Utc>::from(Local::now()), format!("%{id}")],
-                )
-                .expect("SQL statement is valid");
         }
         None if tasks.len() == 1 || args.all => {
             s.conn
@@ -78,10 +65,10 @@ pub fn stop(s: &ShiftDb, args: &Config) -> Result<(), StopError> {
         }
         None => match tasks.len() {
             0 => {
-                return Err(StopError::NoTasks);
+                return Err(Error::NoTasks);
             }
             _ => {
-                return Err(StopError::MultipleTasks(tasks));
+                return Err(Error::MultipleTasks(tasks));
             }
         },
     }
@@ -93,7 +80,7 @@ mod test {
     use crate::commands::tasks::tasks;
     use crate::{commands::test::start_with_name, Config, ShiftDb};
 
-    use super::StopError;
+    use super::Error;
 
     use super::stop;
 
@@ -127,7 +114,7 @@ mod test {
         };
         let a = stop(&s, &config).expect_err("Can't stop two tasks");
         match a {
-            StopError::MultipleTasks(t) => {
+            Error::MultipleTasks(t) => {
                 assert_eq!(t.len(), 2, "Should get both task1 and task2");
                 assert_eq!(
                     t.iter().map(|t| &t.name).collect::<Vec<&String>>(),
