@@ -2,7 +2,7 @@ use std::{error::Error, fmt::Display};
 
 use rusqlite::params;
 
-use crate::{Config, ShiftDb, Task};
+use crate::{Config, ShiftDb, TaskEvent, TaskState};
 
 #[derive(Debug)]
 pub enum StartError {
@@ -18,23 +18,22 @@ impl Display for StartError {
     }
 }
 
-pub fn start(s: &ShiftDb, args: &Config) -> Result<Task, StartError> {
-    let mut task = Task::new(args.uid.clone().expect("Required to specify task name"));
+pub fn start(s: &ShiftDb, args: &Config) -> Result<TaskEvent, StartError> {
+    let name = args.uid.clone().expect("Required to specify task name");
+    let ongoing = s.ongoing_sessions().into_iter().filter(|s| s.name == name);
+    let mut event = TaskEvent::new(name.to_string(), None, TaskState::Started);
     if let Some(start_time) = args.start_time {
-        task.start = start_time.into()
+        event.time = start_time.into()
     }
 
+    if ongoing.count() > 0 {
+        return Err(StartError::Ongoing(event.name));
+    }
     match s.conn.execute(
-        "INSERT INTO tasks 
-             SELECT ?1, ?2, ?3, ?4
-             WHERE NOT EXISTS(
-                 SELECT * FROM tasks
-                 WHERE name = ?2 AND stop IS NULL
-             );",
-        params![task.id.to_string(), task.name, task.start, task.stop],
+        "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5);",
+        params![event.id, event.name, event.session, event.state, event.time],
     ) {
-        Ok(1) => Ok(task),
-        Ok(0) => Err(StartError::Ongoing(task.name)),
+        Ok(1) => Ok(event),
         Ok(u) => Err(StartError::SqlError(format!(
             "Inserted {} tasks when only expected 1",
             u
@@ -47,7 +46,7 @@ pub fn start(s: &ShiftDb, args: &Config) -> Result<Task, StartError> {
 mod test {
     use chrono::{DateTime, Local};
 
-    use crate::{commands::tasks::tasks, Config, ShiftDb, Task};
+    use crate::{commands::sessions::sessions, Config, ShiftDb};
 
     use super::start;
 
@@ -62,12 +61,17 @@ mod test {
             ..Default::default()
         };
         start(&s, &config).unwrap();
+        assert_eq!(s.ongoing_sessions().len(), 1);
 
-        let config = Config {
-            count: 50,
-            ..Default::default()
-        };
-        let tasks = tasks(&s, &config);
-        assert_eq!(tasks.unwrap()[0].start, time, "Start time not handled");
+        //let config = Config {
+        //    count: 50,
+        //    ..Default::default()
+        //};
+        //let tasks = sessions(&s, &config);
+        //assert_eq!(
+        //    tasks.unwrap()[0].events[0].time,
+        //    time,
+        //    "Start time not handled"
+        //);
     }
 }

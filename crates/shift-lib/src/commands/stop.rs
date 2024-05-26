@@ -1,74 +1,83 @@
-use chrono::{DateTime, Local, Utc};
 use rusqlite::params;
 use thiserror::Error;
 
-use crate::{Config, ShiftDb, Task};
+use crate::{Config, ShiftDb, TaskEvent, TaskSession, TaskState};
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Could not decide which task stop from {0:?}")]
-    MultipleTasks(Vec<Task>),
+    MultipleSessions(Vec<TaskSession>),
     #[error("Expected to update one task but updated {count} rows for {task}")]
-    UpdateError { count: usize, task: Task },
+    UpdateError { count: usize, task: TaskEvent },
     #[error("Could not find any tasks to stop")]
     NoTasks,
 }
 
 /// Update task with stop time
 pub fn stop(s: &ShiftDb, args: &Config) -> Result<(), Error> {
-    let query = "SELECT * FROM tasks WHERE stop IS NULL";
-    let mut stmt = s.conn.prepare(query).expect("SQL statement is valid");
-    let tasks = stmt
-        .query_map([], |row| Task::try_from(row))
-        .expect("No parameters should always bind correctly")
-        .flatten()
-        .collect::<Vec<Task>>();
+    let ongoing = s.ongoing_sessions();
+    // TODO handle paused sessions
 
     match &args.uid {
-        Some(id) => {
-            let tasks_name_match = s.get_tasks(id);
-            match tasks_name_match.len() {
+        Some(name) => {
+            let ongoing_with_uid = ongoing
+                .into_iter()
+                .filter(|s| &s.name == name || s.id.to_string().ends_with(name))
+                .collect::<Vec<TaskSession>>();
+            match ongoing_with_uid.len() {
                 0 => {
-                    dbg!(&tasks_name_match);
                     return Err(Error::NoTasks);
                 }
                 1 => {
-                    if let Some(t) = tasks_name_match.first() {
-                        return match s
-                            .conn
-                            .execute(
-                                "UPDATE tasks SET stop = ?1 WHERE name = ?2 and stop IS NULL",
-                                params![DateTime::<Utc>::from(Local::now()), t.name],
-                            )
-                            .expect("SQL statement is vaild")
-                        {
-                            1 => Ok(()),
-                            c => Err(Error::UpdateError {
-                                count: c,
-                                task: t.clone(),
-                            }),
-                        };
-                    }
+                    let session = ongoing_with_uid
+                        .first()
+                        .expect("Should be exactly one session in the list");
+                    let stop = TaskEvent::new(
+                        session.name.to_string(),
+                        Some(session.id),
+                        TaskState::Stopped,
+                    );
+                    return match s
+                        .conn
+                        .execute(
+                            "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5)",
+                            params![stop.id, stop.name, stop.session, stop.state, stop.time],
+                        )
+                        .expect("SQL statement is vaild")
+                    {
+                        1 => Ok(()),
+                        c => Err(Error::UpdateError {
+                            count: c,
+                            task: stop.clone(),
+                        }),
+                    };
                 }
                 2.. => {
-                    return Err(Error::MultipleTasks(tasks_name_match));
+                    return Err(Error::MultipleSessions(ongoing_with_uid));
                 }
             }
         }
-        None if tasks.len() == 1 || args.all => {
-            s.conn
-                .execute(
-                    "UPDATE tasks SET stop = ?1 WHERE stop IS NULL",
-                    params![DateTime::<Utc>::from(Local::now())],
-                )
-                .expect("SQL statement is vaild");
+        None if ongoing.len() == 1 || args.all => {
+            for session in ongoing {
+                let event = TaskEvent::new(
+                    session.name.to_string(),
+                    Some(session.id),
+                    TaskState::Stopped,
+                );
+                s.conn
+                    .execute(
+                        "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![event.id, event.name, event.session, event.state, event.time],
+                    )
+                    .expect("SQL statement is vaild");
+            }
         }
-        None => match tasks.len() {
+        None => match ongoing.len() {
             0 => {
                 return Err(Error::NoTasks);
             }
             _ => {
-                return Err(Error::MultipleTasks(tasks));
+                return Err(Error::MultipleSessions(ongoing));
             }
         },
     }
@@ -77,7 +86,8 @@ pub fn stop(s: &ShiftDb, args: &Config) -> Result<(), Error> {
 
 #[cfg(test)]
 mod test {
-    use crate::commands::tasks::tasks;
+    use crate::commands::sessions::sessions;
+    use crate::TaskState;
     use crate::{commands::test::start_with_name, Config, ShiftDb};
 
     use super::Error;
@@ -95,10 +105,13 @@ mod test {
             ..Default::default()
         };
         stop(&s, &config).expect("Should stop without error");
-        let tasks = tasks(&s, &config).expect("Should get task1");
+        let tasks = sessions(&s, &config).expect("Should get task1");
 
         assert_eq!(tasks.len(), 1, "Didn't get expected amount of tasks");
-        assert!(tasks[0].stop != None, "the task stop field was not set")
+        assert!(
+            tasks[0].events.last().unwrap().state == TaskState::Stopped,
+            "the task stop field was not set"
+        )
     }
 
     #[test]
@@ -114,14 +127,14 @@ mod test {
         };
         let a = stop(&s, &config).expect_err("Can't stop two tasks");
         match a {
-            Error::MultipleTasks(t) => {
+            Error::MultipleSessions(t) => {
                 assert_eq!(t.len(), 2, "Should get both task1 and task2");
                 assert_eq!(
                     t.iter().map(|t| &t.name).collect::<Vec<&String>>(),
                     vec!["task1", "task2"]
                 )
             }
-            _ => panic!("error"),
+            _ => panic!("error {}", a),
         }
     }
 
@@ -137,11 +150,18 @@ mod test {
             ..Default::default()
         };
         stop(&s, &config).expect("Can stop all");
-        let tasks = tasks(&s, &config).expect("Should get task1 and task2");
+        let tasks = sessions(&s, &config).expect("Should get task1 and task2");
 
         assert_eq!(tasks.len(), 2, "Didn't get expected amount of tasks");
         for t in tasks {
-            assert!(t.stop != None, "the task stop field was not set: {t:?}")
+            assert_eq!(
+                t.events
+                    .iter()
+                    .filter(|e| e.state == TaskState::Stopped)
+                    .count(),
+                1,
+                "the task stop field was not set: {t:?}"
+            )
         }
     }
 
@@ -161,11 +181,11 @@ mod test {
             all: true,
             ..Default::default()
         };
-        let tasks = tasks(&s, &config).expect("Should get task1 and task2");
+        let tasks = sessions(&s, &config).expect("Should get task1 and task2");
 
         assert_eq!(tasks.len(), 1, "Didn't get expected amount of tasks");
         assert!(
-            tasks.first().unwrap().stop != None,
+            tasks.first().unwrap().events.last().unwrap().state == TaskState::Stopped,
             "the task stop field was not set: {:?}",
             tasks.first()
         )

@@ -3,10 +3,10 @@ use cli::{Cli, Commands};
 use shift_lib::{
     commands::{
         pause::{pause, resume},
+        sessions::sessions,
         start::start,
         status::status,
         stop::{self, stop},
-        tasks::tasks,
     },
     Config,
 };
@@ -58,7 +58,7 @@ fn main() {
             };
             stop(&shift, &config).unwrap_or_else(|err| {
                 match err {
-                    stop::Error::MultipleTasks(tasks) => {
+                    stop::Error::MultipleSessions(tasks) => {
                         for task in tasks {
                             eprintln!("{task}");
                         }
@@ -88,7 +88,7 @@ fn main() {
                 })
             });
 
-            let tasks = tasks(
+            let tasks = sessions(
                 &shift,
                 &Config {
                     from: from_time,

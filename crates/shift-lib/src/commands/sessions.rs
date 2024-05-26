@@ -1,61 +1,93 @@
-use rusqlite::{params, Row};
+use std::{collections::HashMap, str::FromStr};
 
-use crate::{Config, ShiftDb, Task};
+use rusqlite::{params, Row};
+use uuid::Uuid;
+
+use crate::{Config, ShiftDb, TaskEvent, TaskSession};
 
 /// Retrieve the tasks from the database
-pub fn tasks(s: &ShiftDb, args: &Config) -> anyhow::Result<Vec<Task>> {
-    let row_to_task = |row: &Row<'_>| Task::try_from(row);
+pub fn sessions(s: &ShiftDb, args: &Config) -> anyhow::Result<Vec<TaskSession>> {
+    let row_to_events = |row: &Row<'_>| TaskEvent::try_from(row);
     let mut stmt;
-    let task_iter = match (args.to, args.from) {
+    let events = match (args.to, args.from) {
         (Some(to_date), Some(from_date)) => {
             let query =
-                "SELECT * FROM tasks WHERE start > ? and start < ? ORDER BY start DESC LIMIT ?";
+                "SELECT * FROM task_events WHERE time > ?1 and time < ?2 ORDER BY datetime(time) DESC LIMIT ?3";
             stmt = s.conn.prepare(query)?;
             if args.all || !args.tasks.is_empty() {
-                stmt.query_map(params![from_date, to_date, -1], row_to_task)?
+                stmt.query_map(params![from_date, to_date, -1], row_to_events)?
             } else {
-                stmt.query_map(params![from_date, to_date, args.count], row_to_task)?
+                stmt.query_map(params![from_date, to_date, args.count], row_to_events)?
             }
         }
         (None, Some(from_date)) => {
-            let query = "SELECT * FROM tasks WHERE start > ? ORDER BY start DESC LIMIT ?";
+            let query =
+                "SELECT * FROM task_events WHERE time > ? ORDER BY datetime(time) DESC LIMIT ?";
             stmt = s.conn.prepare(query)?;
             if args.all || !args.tasks.is_empty() {
-                stmt.query_map(params![from_date, -1], row_to_task)?
+                stmt.query_map(params![from_date, -1], row_to_events)?
             } else {
-                stmt.query_map(params![from_date, args.count], row_to_task)?
+                stmt.query_map(params![from_date, args.count], row_to_events)?
             }
         }
         (Some(to_date), None) => {
-            let query = "SELECT * FROM tasks WHERE start < ? ORDER BY start DESC LIMIT ?";
+            let query = "SELECT * FROM task_events WHERE time < ? ORDER BY datetime(time) DESC";
             stmt = s.conn.prepare(query)?;
             if args.all || !args.tasks.is_empty() {
-                stmt.query_map(params![to_date, -1], row_to_task)?
+                stmt.query_map(params![to_date], row_to_events)?
             } else {
-                stmt.query_map(params![to_date, args.count], row_to_task)?
+                stmt.query_map(params![to_date], row_to_events)?
             }
         }
         (None, None) => {
-            let query = "SELECT * FROM tasks ORDER BY start DESC LIMIT ?";
+            let query = "SELECT * FROM task_events ORDER BY datetime(time) DESC";
             stmt = s.conn.prepare(query)?;
-            if args.all || !args.tasks.is_empty() {
-                stmt.query_map([-1], row_to_task)?
-            } else {
-                stmt.query_map([args.count], row_to_task)?
-            }
+            stmt.query_map([], row_to_events)?
         }
     };
 
-    let iter = task_iter.flatten();
-    let res = if !args.tasks.is_empty() {
-        let filtered = iter.filter(|t| args.tasks.contains(&t.name));
-        if args.all {
-            filtered.collect::<Vec<Task>>()
+    // get events for all those sessions and insert them into the sesssion structs
+    let mut session_map = HashMap::<(String, String), Vec<TaskEvent>>::new();
+    for e in events {
+        let event = e.expect("Database corrupt, could not parse event from database");
+        if let Some(session_events) =
+            session_map.get_mut(&(event.name.to_string(), event.session.to_string()))
+        {
+            session_events.push(event);
         } else {
-            filtered.take(args.count).collect::<Vec<Task>>()
+            session_map.insert(
+                (event.name.to_string(), event.session.to_string()),
+                vec![event],
+            );
         }
+    }
+    let mut iter = session_map
+        .into_iter()
+        .map(|((name, id), events)| TaskSession {
+            id: Uuid::from_str(&id).expect("Could not deserialize id as an uuid"),
+            name,
+            events,
+        })
+        .collect::<Vec<TaskSession>>();
+    iter.sort_by(|sa, sb| {
+        sb.events
+            .last()
+            .unwrap()
+            .time
+            .cmp(&sa.events.last().unwrap().time)
+    });
+
+    let res = if !args.tasks.is_empty() {
+        let filtered = iter.into_iter().filter(|t| args.tasks.contains(&t.name));
+        if args.all {
+            filtered.collect()
+        } else {
+            filtered.take(args.count).collect()
+        }
+    } else if args.all {
+        iter
     } else {
-        iter.collect::<Vec<Task>>()
+        iter.into_iter().take(args.count).collect()
     };
 
     Ok(res)
@@ -64,7 +96,7 @@ pub fn tasks(s: &ShiftDb, args: &Config) -> anyhow::Result<Vec<Task>> {
 #[cfg(test)]
 mod test {
     use crate::{
-        commands::{tasks::tasks, test::start_with_name},
+        commands::{sessions::sessions, test::start_with_name},
         Config, ShiftDb,
     };
 
@@ -80,7 +112,7 @@ mod test {
             ..Default::default()
         };
 
-        let tasks = tasks(&s, &config);
+        let tasks = sessions(&s, &config);
         assert_eq!(tasks.unwrap().len(), 2);
     }
 
@@ -96,7 +128,7 @@ mod test {
             count: 4,
             ..Default::default()
         };
-        let tasks = tasks(&s, &config);
+        let tasks = sessions(&s, &config);
         assert_eq!(
             tasks
                 .unwrap()
@@ -120,7 +152,7 @@ mod test {
             all: true,
             ..Default::default()
         };
-        let tasks = tasks(&s, &config);
+        let tasks = sessions(&s, &config);
         assert_eq!(tasks.unwrap().len(), 100);
     }
 
@@ -137,7 +169,7 @@ mod test {
             tasks: vec!["task1".to_string(), "task2".to_string()],
             ..Default::default()
         };
-        let tasks = tasks(&s, &config).expect("Should get task1 and task2");
+        let tasks = sessions(&s, &config).expect("Should get task1 and task2");
 
         assert_eq!(tasks.len(), 2);
         assert_eq!(
@@ -164,7 +196,7 @@ mod test {
             ],
             ..Default::default()
         };
-        let tasks = tasks(&s, &config).expect("Should get task1 and task2");
+        let tasks = sessions(&s, &config).expect("Should get task1 and task2");
 
         assert_eq!(tasks.len(), 3);
         assert_eq!(

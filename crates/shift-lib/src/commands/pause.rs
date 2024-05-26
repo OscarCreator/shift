@@ -1,15 +1,14 @@
 use std::{error::Error, fmt::Display};
 
-use chrono::{DateTime, Local, Utc};
 use rusqlite::params;
 
-use crate::{Config, ShiftDb, Task, TaskPause};
+use crate::{Config, ShiftDb, TaskEvent, TaskSession, TaskState};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PauseResumeError {
-    MultipleTasks(Vec<Task>),
-    MultiplePauses(Vec<TaskPause>),
-    UpdateError(Task),
+    MultipleSessions(Vec<TaskSession>),
+    MultiplePauses(Vec<TaskSession>),
+    UpdateError(TaskSession),
     SqlError(String),
     NoTasks,
     NoPauses,
@@ -21,7 +20,7 @@ impl Error for PauseResumeError {}
 impl Display for PauseResumeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PauseResumeError::MultipleTasks(tasks) => f.write_fmt(format_args!(
+            PauseResumeError::MultipleSessions(tasks) => f.write_fmt(format_args!(
                 "Multiple tasks: {}",
                 tasks
                     .iter()
@@ -29,7 +28,7 @@ impl Display for PauseResumeError {
                     .collect::<Vec<_>>()
                     .join(" ")
             )),
-            PauseResumeError::MultiplePauses(_) => f.write_str("Multiple pauses ongoing"),
+            PauseResumeError::MultiplePauses(sessions) => f.write_str("Multiple pauses ongoing"),
             PauseResumeError::UpdateError(u) => {
                 f.write_fmt(format_args!("Could not update task: '{}'", u.name))
             }
@@ -41,82 +40,62 @@ impl Display for PauseResumeError {
 }
 
 pub fn pause(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
-    let query = "SELECT * FROM tasks WHERE stop IS NULL";
-    let mut stmt = s.conn.prepare(query).expect("SQL statement is valid");
-    let tasks = stmt
-        .query_map([], |row| Task::try_from(row))
-        .expect("No parameters should always bind correctly")
-        .flatten()
-        .collect::<Vec<Task>>();
+    let ongoing = s
+        .ongoing_sessions()
+        .into_iter()
+        .filter(|s| !s.is_paused())
+        .collect::<Vec<TaskSession>>();
 
     match &args.uid {
-        Some(id) => {
-            let tasks_name_match = s.get_tasks(id);
-            match tasks_name_match.len() {
+        Some(uid) => {
+            let tasks_with_uid = ongoing
+                .into_iter()
+                .filter(|s| &s.name == uid || s.id.to_string().ends_with(uid))
+                .collect::<Vec<TaskSession>>();
+            match tasks_with_uid.len() {
                 0 => return Err(PauseResumeError::NoTasks),
                 1 => {
-                    if let Some(t) = tasks_name_match.first() {
-                        let pause = TaskPause::new(t.id.clone());
-                        return match s.conn.execute(
-                            "INSERT INTO task_pauses VALUES (?1, ?2, ?3, ?4)",
-                            params![pause.id, pause.task_id, pause.start, pause.stop],
-                        ) {
-                            Ok(count) => {
-                                if count == 1 {
-                                    Ok(())
-                                } else {
-                                    Err(PauseResumeError::UpdateError(t.clone()))
-                                }
-                            }
-                            Err(err) => Err(PauseResumeError::SqlError(err.to_string())),
-                        };
-                    }
+                    let t = tasks_with_uid
+                        .first()
+                        .expect("Sessions should have one element");
+                    let pause = TaskEvent::new(t.name.to_string(), Some(t.id), TaskState::Paused);
+                    return match s.conn.execute(
+                        "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![
+                            pause.id.to_string(),
+                            pause.name,
+                            pause.session.to_string(),
+                            pause.state,
+                            pause.time
+                        ],
+                    ) {
+                        Ok(1) => Ok(()),
+                        Ok(count) => Err(PauseResumeError::UpdateError(t.clone())),
+                        Err(err) => Err(PauseResumeError::SqlError(err.to_string())),
+                    };
                 }
                 2.. => {
-                    return Err(PauseResumeError::MultipleTasks(tasks_name_match));
+                    return Err(PauseResumeError::MultipleSessions(tasks_with_uid));
                 }
             }
         }
-        None if tasks.len() == 1 || args.all => {
-            let query = "SELECT * FROM task_pauses WHERE stop IS NULL";
-            let mut stmt = s.conn.prepare(query).expect("SQL statement is valid");
-            let ongoing_pauses = stmt
-                .query_map([], |row| TaskPause::try_from(row))
-                .expect("No parameters should always bind correctly")
-                .flatten()
-                .map(|p| p.task_id)
-                .collect::<Vec<String>>();
-
-            let pauses = tasks
-                .into_iter()
-                .filter_map(|t| {
-                    if ongoing_pauses.contains(&t.id) {
-                        None
-                    } else {
-                        Some(TaskPause::new(t.id))
-                    }
-                })
-                .collect::<Vec<TaskPause>>();
-
-            // TODO update all at the same time
-            if pauses.is_empty() {
-                return Err(PauseResumeError::NoPauses);
-            }
-            for p in pauses {
+        None if ongoing.len() == 1 || args.all => {
+            for session in ongoing {
+                let e = TaskEvent::new(session.name, Some(session.id), TaskState::Paused);
                 s.conn
                     .execute(
-                        "INSERT INTO task_pauses VALUES (?1, ?2, ?3, ?4)",
-                        params![p.id, p.task_id, p.start, p.stop],
+                        "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![e.id, e.name, e.session, e.state, e.time],
                     )
                     .expect("SQL statement is vaild");
             }
         }
-        None => match tasks.len() {
+        None => match ongoing.len() {
             0 => {
                 return Err(PauseResumeError::NoTasks);
             }
             _ => {
-                return Err(PauseResumeError::MultipleTasks(tasks));
+                return Err(PauseResumeError::MultipleSessions(ongoing));
             }
         },
     }
@@ -125,23 +104,35 @@ pub fn pause(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
 }
 
 pub fn resume(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
-    // TODO joint tasks and task_pauses so we get the name also from this query
-    let task_pauses = s.get_ongoing_pauses();
+    let task_pauses = s
+        .ongoing_sessions()
+        .into_iter()
+        .filter(|s| s.is_paused())
+        .collect::<Vec<TaskSession>>();
 
     match &args.uid {
         // resume task with id (name or uuid)
-        Some(id) => {
-            let tasks_with_uid = s.get_tasks(id);
+        Some(name) => {
+            let tasks_with_uid = task_pauses
+                .into_iter()
+                .filter(|s| &s.name == name || s.id.to_string().ends_with(name))
+                .collect::<Vec<TaskSession>>();
 
             match tasks_with_uid.len() {
                 0 => return Err(PauseResumeError::NoTasks),
                 1 => {
                     if let Some(t) = tasks_with_uid.first() {
-                        let pause = s.is_paused(&t.id)?;
-
+                        let resume =
+                            TaskEvent::new(t.name.to_string(), Some(t.id), TaskState::Resumed);
                         return match s.conn.execute(
-                            "UPDATE task_pauses SET stop = ?1 WHERE id = ?2",
-                            params![DateTime::<Utc>::from(Local::now()), pause.id],
+                            "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5)",
+                            params![
+                                resume.id,
+                                resume.name,
+                                resume.session,
+                                resume.state,
+                                resume.time
+                            ],
                         ) {
                             Ok(count) => {
                                 if count == 1 {
@@ -157,17 +148,26 @@ pub fn resume(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
                 2.. => {
                     // It does not make sence to have two tasks with same name
                     // and have ongoing pauses, therefor this is not allowed.
-                    return Err(PauseResumeError::MultipleTasks(tasks_with_uid));
+                    return Err(PauseResumeError::MultipleSessions(tasks_with_uid));
                 }
             }
         }
         None if task_pauses.len() == 1 || args.all => {
-            s.conn
-                .execute(
-                    "UPDATE task_pauses SET stop = ?1 WHERE stop IS NULL",
-                    params![DateTime::<Utc>::from(Local::now())],
-                )
-                .expect("SQL statement is vaild");
+            for p in task_pauses {
+                let resume = TaskEvent::new(p.name.to_string(), Some(p.id), TaskState::Resumed);
+                s.conn
+                    .execute(
+                        "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![
+                            resume.id,
+                            resume.name,
+                            resume.session,
+                            resume.state,
+                            resume.time
+                        ],
+                    )
+                    .expect("SQL statement is vaild");
+            }
         }
         None => match task_pauses.len() {
             0 => {
@@ -185,8 +185,10 @@ pub fn resume(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
 #[cfg(test)]
 mod test {
     use crate::{
-        commands::{pause::PauseResumeError, stop::stop, tasks::tasks, test::start_with_name},
-        Config, ShiftDb, Task,
+        commands::{
+            pause::PauseResumeError, sessions::sessions, stop::stop, test::start_with_name,
+        },
+        Config, ShiftDb, TaskEvent, TaskSession,
     };
 
     use super::{pause, resume};
@@ -222,14 +224,10 @@ mod test {
             count: 100,
             ..Default::default()
         };
-        let tasks = tasks(&s, &config).expect("Should get task1 and task2");
+        let tasks = sessions(&s, &config).expect("Should get task1 and task2");
         assert_eq!(tasks.len(), 2, "Started 2 tasks");
         assert_eq!(
-            tasks
-                .iter()
-                .filter(|t| t.name == "task2")
-                .collect::<Vec<&Task>>()
-                .len(),
+            tasks.iter().filter(|t| t.name == "task2").count(),
             1,
             "Stopped task2"
         )
@@ -241,7 +239,7 @@ mod test {
         let task1 = start_with_name(&s, "task1");
         start_with_name(&s, "task2");
         let config = Config {
-            uid: Some(task1.id.to_string()),
+            uid: Some(task1.session.to_string()),
             ..Default::default()
         };
 
@@ -253,9 +251,9 @@ mod test {
             count: 100,
             ..Default::default()
         };
-        let tasks = tasks(&s, &config).expect("Should get task1 and task2");
+        let tasks = sessions(&s, &config).expect("Should get task1 and task2");
         assert_eq!(tasks.len(), 2, "Started 2 tasks");
-        assert_eq!(s.get_tasks("task1").len(), 1, "Stopped task1");
+        assert_eq!(s.ongoing_sessions().len(), 1, "Stopped task1");
     }
 
     #[test]
@@ -269,9 +267,22 @@ mod test {
             ..Default::default()
         };
         pause(&s, &config).expect("Can pause all task");
-        assert_eq!(s.get_ongoing_pauses().len(), 100);
+        assert_eq!(
+            s.ongoing_sessions()
+                .iter()
+                .filter(|s| s.is_paused())
+                .count(),
+            100
+        );
         resume(&s, &config).expect("Can resume resume all task");
-        assert_eq!(s.get_ongoing_pauses().len(), 0, "Stopped all tasks");
+        assert_eq!(
+            s.ongoing_sessions()
+                .iter()
+                .filter(|s| s.is_paused())
+                .count(),
+            0,
+            "Stopped all tasks"
+        );
     }
 
     #[test]
@@ -285,7 +296,7 @@ mod test {
         pause(&s, &config).expect("Allowed to pause first time");
         assert_eq!(
             pause(&s, &config).expect_err("Not allowd to pause a second time"),
-            PauseResumeError::NoPauses
+            PauseResumeError::NoTasks
         );
     }
 
