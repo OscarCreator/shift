@@ -12,7 +12,7 @@ use shift_lib::{
     },
     Config,
 };
-use std::{io::Write, path::Path};
+use std::{env::var, fs, io::Write, path::Path};
 
 use parse::to_date;
 
@@ -22,7 +22,18 @@ mod parse;
 fn main() {
     let cli = Cli::parse();
 
-    let shift = shift_lib::ShiftDb::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("tasks.db"));
+    let config_home = var("XDG_CONFIG_HOME")
+        .or_else(|_| var("HOME").map(|home| format!("{}/.config/st", home)))
+        .unwrap_or_else(|_| {
+            eprintln!("XDG_CONFIG_HOME or HOME environment variable not found");
+            std::process::exit(1);
+        });
+    fs::create_dir_all(&config_home).unwrap_or_else(|err| {
+        eprintln!("Could not create {config_home} directories, Error: {err}");
+        std::process::exit(1);
+    });
+    let db_path = Path::new(&config_home).join("events.db");
+    let shift = shift_lib::ShiftDb::new(db_path);
 
     match &cli.command {
         Commands::Status => {
@@ -153,6 +164,7 @@ fn main() {
             &shift,
             &Config {
                 uid: args.uid.clone(),
+                all: args.all,
                 ..Default::default()
             },
         )
@@ -164,6 +176,7 @@ fn main() {
             &shift,
             &Config {
                 uid: args.uid.clone(),
+                all: args.all,
                 ..Default::default()
             },
         )

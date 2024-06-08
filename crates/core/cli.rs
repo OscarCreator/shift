@@ -92,9 +92,11 @@ pub(crate) struct SwitchArgs {
 #[derive(Args)]
 pub(crate) struct PauseArgs {
     pub(crate) uid: Option<String>,
+    pub(crate) all: bool,
 }
 
 #[derive(Args)]
 pub(crate) struct ResumeArgs {
     pub(crate) uid: Option<String>,
+    pub(crate) all: bool,
 }
