@@ -1,8 +1,10 @@
 use std::{error::Error, fmt::Display};
 
+use chrono::{DateTime, Local};
 use rusqlite::params;
+use serde::{Deserialize, Serialize};
 
-use crate::{Config, ShiftDb, TaskEvent, TaskState};
+use crate::{ShiftDb, TaskEvent, TaskState};
 
 #[derive(Debug)]
 pub enum StartError {
@@ -14,14 +16,22 @@ impl Error for StartError {}
 
 impl Display for StartError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("todo")
+        // TODO
+        write!(f, "{:?}", self)?;
+        Ok(())
     }
 }
 
-pub fn start(s: &ShiftDb, args: &Config) -> Result<TaskEvent, StartError> {
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct StartOpts {
+    pub uid: Option<String>,
+    pub start_time: Option<DateTime<Local>>,
+}
+
+pub fn start(s: &ShiftDb, args: &StartOpts) -> Result<TaskEvent, StartError> {
     let name = args.uid.clone().expect("Required to specify task name");
     let ongoing = s.ongoing_sessions().into_iter().filter(|s| s.name == name);
-    let mut event = TaskEvent::new(name.to_string(), None, TaskState::Started);
+    let mut event = TaskEvent::new(name.to_string(), None, None, TaskState::Started);
     if let Some(start_time) = args.start_time {
         event.time = start_time.into()
     }
@@ -44,9 +54,10 @@ pub fn start(s: &ShiftDb, args: &Config) -> Result<TaskEvent, StartError> {
 
 #[cfg(test)]
 mod test {
-    use chrono::{DateTime, Local};
+    use chrono::Local;
 
-    use crate::{commands::sessions::sessions, Config, ShiftDb};
+    use crate::commands::sessions::sessions;
+    use crate::{commands::start::StartOpts, Config, ShiftDb};
 
     use super::start;
 
@@ -54,8 +65,8 @@ mod test {
     fn start_time() {
         let s = ShiftDb::new("");
 
-        let time = DateTime::from(Local::now());
-        let config = Config {
+        let time = Local::now();
+        let config = StartOpts {
             uid: Some("task1".to_string()),
             start_time: Some(time),
             ..Default::default()
@@ -63,15 +74,15 @@ mod test {
         start(&s, &config).unwrap();
         assert_eq!(s.ongoing_sessions().len(), 1);
 
-        //let config = Config {
-        //    count: 50,
-        //    ..Default::default()
-        //};
-        //let tasks = sessions(&s, &config);
-        //assert_eq!(
-        //    tasks.unwrap()[0].events[0].time,
-        //    time,
-        //    "Start time not handled"
-        //);
+        let config = Config {
+            count: 50,
+            ..Default::default()
+        };
+        let tasks = sessions(&s, &config);
+        assert_eq!(
+            tasks.unwrap()[0].events[0].time,
+            time,
+            "Start time not handled"
+        );
     }
 }

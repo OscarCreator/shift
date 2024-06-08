@@ -1,12 +1,14 @@
+use chrono::Local;
 use clap::Parser;
 use cli::{Cli, Commands};
 use shift_lib::{
     commands::{
         pause::{pause, resume},
         sessions::sessions,
-        start::start,
+        start::{start, StartOpts},
         status::status,
-        stop::{self, stop},
+        stop::{self, stop, StopOpts},
+        undo::{self, undo},
     },
     Config,
 };
@@ -40,18 +42,17 @@ fn main() {
                     std::process::exit(1);
                 })
             });
-            let config = shift_lib::Config {
+            let opts = shift_lib::commands::start::StartOpts {
                 uid: Some(args.name.clone()),
                 start_time,
-                ..Default::default()
             };
-            start(&shift, &config).unwrap_or_else(|err| {
+            start(&shift, &opts).unwrap_or_else(|err| {
                 eprintln!("{err}");
                 std::process::exit(1);
             });
         }
         Commands::Stop(args) => {
-            let config = shift_lib::Config {
+            let config = shift_lib::commands::stop::StopOpts {
                 uid: args.name.clone(),
                 all: args.all,
                 ..Default::default()
@@ -120,10 +121,13 @@ fn main() {
                 }
             }
         }
+        // TODO do no be able to switch to same as ongoing
         Commands::Switch(args) => {
+            let time = Local::now();
             stop(
                 &shift,
-                &Config {
+                &StopOpts {
+                    stop_time: Some(time),
                     ..Default::default()
                 },
             )
@@ -134,9 +138,9 @@ fn main() {
 
             start(
                 &shift,
-                &Config {
+                &StartOpts {
                     uid: Some(args.uid.clone()),
-                    ..Default::default()
+                    start_time: Some(time),
                 },
             )
             .unwrap_or_else(|err| {
@@ -167,5 +171,11 @@ fn main() {
             eprintln!("{err}");
             std::process::exit(1);
         }),
+        Commands::Undo => {
+            undo(&shift, &undo::Opts::default()).unwrap_or_else(|err| {
+                eprintln!("{err}");
+                std::process::exit(1);
+            });
+        }
     }
 }

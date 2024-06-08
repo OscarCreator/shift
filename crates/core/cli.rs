@@ -26,6 +26,8 @@ pub(crate) enum Commands {
     Pause(PauseArgs),
     /// Resume a paused task
     Resume(ResumeArgs),
+    /// Undo latest command
+    Undo,
 }
 
 #[derive(Args)]

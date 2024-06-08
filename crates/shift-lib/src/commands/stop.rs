@@ -1,9 +1,11 @@
+use chrono::{DateTime, Local};
 use rusqlite::params;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{Config, ShiftDb, TaskEvent, TaskSession, TaskState};
+use crate::{ShiftDb, TaskEvent, TaskSession, TaskState};
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum Error {
     #[error("Could not decide which task stop from {0:?}")]
     MultipleSessions(Vec<TaskSession>),
@@ -13,8 +15,15 @@ pub enum Error {
     NoTasks,
 }
 
+#[derive(Debug, Deserialize, Serialize, Default)]
+pub struct StopOpts {
+    pub uid: Option<String>,
+    pub all: bool,
+    pub stop_time: Option<DateTime<Local>>,
+}
+
 /// Update task with stop time
-pub fn stop(s: &ShiftDb, args: &Config) -> Result<(), Error> {
+pub fn stop(s: &ShiftDb, args: &StopOpts) -> Result<(), Error> {
     let ongoing = s.ongoing_sessions();
     // TODO handle paused sessions
 
@@ -35,6 +44,7 @@ pub fn stop(s: &ShiftDb, args: &Config) -> Result<(), Error> {
                     let stop = TaskEvent::new(
                         session.name.to_string(),
                         Some(session.id),
+                        args.stop_time,
                         TaskState::Stopped,
                     );
                     return match s
@@ -57,11 +67,13 @@ pub fn stop(s: &ShiftDb, args: &Config) -> Result<(), Error> {
                 }
             }
         }
-        None if ongoing.len() == 1 || args.all => {
+        None if ongoing.len() == 1 || args.all && !ongoing.is_empty() => {
+            let time = args.stop_time.map_or(Local::now(), |a| a);
             for session in ongoing {
                 let event = TaskEvent::new(
                     session.name.to_string(),
                     Some(session.id),
+                    Some(time),
                     TaskState::Stopped,
                 );
                 s.conn
@@ -86,7 +98,10 @@ pub fn stop(s: &ShiftDb, args: &Config) -> Result<(), Error> {
 
 #[cfg(test)]
 mod test {
+    use chrono::Local;
+
     use crate::commands::sessions::sessions;
+    use crate::commands::stop::StopOpts;
     use crate::TaskState;
     use crate::{commands::test::start_with_name, Config, ShiftDb};
 
@@ -100,16 +115,16 @@ mod test {
 
         start_with_name(&s, "task1");
 
+        stop(&s, &StopOpts::default()).expect("Should stop without error");
         let config = Config {
             count: 10,
             ..Default::default()
         };
-        stop(&s, &config).expect("Should stop without error");
         let tasks = sessions(&s, &config).expect("Should get task1");
 
         assert_eq!(tasks.len(), 1, "Didn't get expected amount of tasks");
         assert!(
-            tasks[0].events.last().unwrap().state == TaskState::Stopped,
+            tasks[0].events.first().unwrap().state == TaskState::Stopped,
             "the task stop field was not set"
         )
     }
@@ -121,11 +136,7 @@ mod test {
         start_with_name(&s, "task1");
         start_with_name(&s, "task2");
 
-        let config = Config {
-            count: 10,
-            ..Default::default()
-        };
-        let a = stop(&s, &config).expect_err("Can't stop two tasks");
+        let a = stop(&s, &StopOpts::default()).expect_err("Can't stop two tasks");
         match a {
             Error::MultipleSessions(t) => {
                 assert_eq!(t.len(), 2, "Should get both task1 and task2");
@@ -145,11 +156,15 @@ mod test {
         start_with_name(&s, "task1");
         start_with_name(&s, "task2");
 
-        let config = Config {
+        let config = StopOpts {
             all: true,
             ..Default::default()
         };
         stop(&s, &config).expect("Can stop all");
+        let config = Config {
+            all: true,
+            ..Default::default()
+        };
         let tasks = sessions(&s, &config).expect("Should get task1 and task2");
 
         assert_eq!(tasks.len(), 2, "Didn't get expected amount of tasks");
@@ -166,13 +181,15 @@ mod test {
     }
 
     #[test]
-    fn stop_with_name() {
+    fn stop_with_name_and_time() {
         let s = ShiftDb::new("");
+        let time = Local::now();
 
         start_with_name(&s, "task1");
 
-        let config = Config {
+        let config = StopOpts {
             uid: Some("task1".to_string()),
+            stop_time: Some(time),
             ..Default::default()
         };
 
@@ -184,10 +201,16 @@ mod test {
         let tasks = sessions(&s, &config).expect("Should get task1 and task2");
 
         assert_eq!(tasks.len(), 1, "Didn't get expected amount of tasks");
+        let stop_event = tasks.first().unwrap().events.last().unwrap();
         assert!(
-            tasks.first().unwrap().events.last().unwrap().state == TaskState::Stopped,
+            stop_event.state == TaskState::Stopped,
             "the task stop field was not set: {:?}",
             tasks.first()
-        )
+        );
+        assert!(
+            stop_event.time == time,
+            "the stop time was not the same: {:?}",
+            tasks.first()
+        );
     }
 }

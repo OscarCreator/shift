@@ -57,14 +57,20 @@ pub struct TaskEvent {
 }
 
 impl TaskEvent {
-    fn new(name: String, session: Option<Uuid>, state: TaskState) -> Self {
+    fn new(
+        name: String,
+        session: Option<Uuid>,
+        time: Option<DateTime<Local>>,
+        state: TaskState,
+    ) -> Self {
         let session_id = session.map_or(Uuid::now_v7(), |a| a);
+        let time = time.map_or(Local::now(), |a| a);
         Self {
             id: Uuid::now_v7().to_string(),
             name,
             session: session_id.to_string(),
             state,
-            time: DateTime::from(Local::now()),
+            time: time.into(),
         }
     }
 }
@@ -98,22 +104,6 @@ pub struct TaskSession {
 }
 
 impl TaskSession {
-    fn new(name: String, uuid: Uuid) -> Self {
-        Self {
-            id: uuid,
-            name,
-            events: vec![],
-        }
-    }
-
-    fn is_completed(&self) -> bool {
-        self.events
-            .iter()
-            .filter(|e| e.state == TaskState::Stopped)
-            .count()
-            == 1
-    }
-
     fn is_paused(&self) -> bool {
         if let Some(e) = self.events.first() {
             if e.state == TaskState::Paused {
@@ -206,16 +196,16 @@ impl ShiftDb {
                 WHERE session == event.session
                 AND state == 'Stopped'
             )
-            ORDER BY datetime(time) DESC";
+            ORDER BY time DESC";
         let mut stmt = self.conn.prepare(query).expect("SQL statement is valid");
-        let mut events = stmt
+        let events = stmt
             .query_map([], |row| TaskEvent::try_from(row))
             .expect("No parameters should always bind correctly")
             .map(|e| e.unwrap())
             .collect::<Vec<TaskEvent>>();
 
         let mut session_events = HashMap::<(String, String), Vec<TaskEvent>>::new();
-        while let Some(event) = events.pop() {
+        for event in events {
             if let Some(event_vec) =
                 session_events.get_mut(&(event.name.to_string(), event.session.to_string()))
             {
@@ -237,10 +227,10 @@ impl ShiftDb {
             .collect::<Vec<TaskSession>>();
         sessions.sort_by(|sa, sb| {
             sa.events
-                .last()
+                .first()
                 .unwrap()
                 .time
-                .cmp(&sb.events.last().unwrap().time)
+                .cmp(&sb.events.first().unwrap().time)
         });
         sessions
     }
@@ -249,25 +239,32 @@ impl ShiftDb {
 #[cfg(test)]
 mod test {
     use crate::{
-        commands::{start, stop},
-        Config, ShiftDb,
+        commands::{
+            start::{self, StartOpts},
+            stop::{self, StopOpts},
+        },
+        ShiftDb,
     };
 
     #[test]
     fn get_ongoing() {
         let s = ShiftDb::new("");
-        let config = Config {
+        let config = StartOpts {
             uid: Some("task1".to_string()),
             ..Default::default()
         };
         start::start(&s, &config).unwrap();
 
-        let config = Config {
+        let config = StartOpts {
             uid: Some("task2".to_string()),
             ..Default::default()
         };
         start::start(&s, &config).unwrap();
 
+        let config = StopOpts {
+            uid: Some("task2".to_string()),
+            ..Default::default()
+        };
         stop::stop(&s, &config).unwrap();
 
         let tasks = s.ongoing_sessions();

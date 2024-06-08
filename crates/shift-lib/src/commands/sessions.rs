@@ -6,32 +6,32 @@ use uuid::Uuid;
 use crate::{Config, ShiftDb, TaskEvent, TaskSession};
 
 /// Retrieve the tasks from the database
+// TODO change return type from Vec to IntoIterator
 pub fn sessions(s: &ShiftDb, args: &Config) -> anyhow::Result<Vec<TaskSession>> {
     let row_to_events = |row: &Row<'_>| TaskEvent::try_from(row);
     let mut stmt;
     let events = match (args.to, args.from) {
         (Some(to_date), Some(from_date)) => {
             let query =
-                "SELECT * FROM task_events WHERE time > ?1 and time < ?2 ORDER BY datetime(time) DESC LIMIT ?3";
+                "SELECT * FROM task_events WHERE time > ?1 and time < ?2 ORDER BY time DESC";
             stmt = s.conn.prepare(query)?;
             if args.all || !args.tasks.is_empty() {
-                stmt.query_map(params![from_date, to_date, -1], row_to_events)?
+                stmt.query_map(params![from_date, to_date], row_to_events)?
             } else {
-                stmt.query_map(params![from_date, to_date, args.count], row_to_events)?
+                stmt.query_map(params![from_date, to_date], row_to_events)?
             }
         }
         (None, Some(from_date)) => {
-            let query =
-                "SELECT * FROM task_events WHERE time > ? ORDER BY datetime(time) DESC LIMIT ?";
+            let query = "SELECT * FROM task_events WHERE time > ? ORDER BY time DESC";
             stmt = s.conn.prepare(query)?;
             if args.all || !args.tasks.is_empty() {
-                stmt.query_map(params![from_date, -1], row_to_events)?
+                stmt.query_map(params![from_date], row_to_events)?
             } else {
-                stmt.query_map(params![from_date, args.count], row_to_events)?
+                stmt.query_map(params![from_date], row_to_events)?
             }
         }
         (Some(to_date), None) => {
-            let query = "SELECT * FROM task_events WHERE time < ? ORDER BY datetime(time) DESC";
+            let query = "SELECT * FROM task_events WHERE time < ? ORDER BY time DESC";
             stmt = s.conn.prepare(query)?;
             if args.all || !args.tasks.is_empty() {
                 stmt.query_map(params![to_date], row_to_events)?
@@ -40,7 +40,7 @@ pub fn sessions(s: &ShiftDb, args: &Config) -> anyhow::Result<Vec<TaskSession>> 
             }
         }
         (None, None) => {
-            let query = "SELECT * FROM task_events ORDER BY datetime(time) DESC";
+            let query = "SELECT * FROM task_events ORDER BY time DESC";
             stmt = s.conn.prepare(query)?;
             stmt.query_map([], row_to_events)?
         }
@@ -71,10 +71,10 @@ pub fn sessions(s: &ShiftDb, args: &Config) -> anyhow::Result<Vec<TaskSession>> 
         .collect::<Vec<TaskSession>>();
     iter.sort_by(|sa, sb| {
         sb.events
-            .last()
+            .first()
             .unwrap()
             .time
-            .cmp(&sa.events.last().unwrap().time)
+            .cmp(&sa.events.first().unwrap().time)
     });
 
     let res = if !args.tasks.is_empty() {

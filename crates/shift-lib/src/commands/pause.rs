@@ -1,5 +1,6 @@
 use std::{error::Error, fmt::Display};
 
+use chrono::Local;
 use rusqlite::params;
 
 use crate::{Config, ShiftDb, TaskEvent, TaskSession, TaskState};
@@ -58,7 +59,8 @@ pub fn pause(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
                     let t = tasks_with_uid
                         .first()
                         .expect("Sessions should have one element");
-                    let pause = TaskEvent::new(t.name.to_string(), Some(t.id), TaskState::Paused);
+                    let pause =
+                        TaskEvent::new(t.name.to_string(), Some(t.id), None, TaskState::Paused);
                     return match s.conn.execute(
                         "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5)",
                         params![
@@ -79,9 +81,15 @@ pub fn pause(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
                 }
             }
         }
-        None if ongoing.len() == 1 || args.all => {
+        None if ongoing.len() == 1 || args.all && !ongoing.is_empty() => {
+            let time = Local::now();
             for session in ongoing {
-                let e = TaskEvent::new(session.name, Some(session.id), TaskState::Paused);
+                let e = TaskEvent::new(
+                    session.name,
+                    Some(session.id),
+                    Some(time),
+                    TaskState::Paused,
+                );
                 s.conn
                     .execute(
                         "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -122,8 +130,12 @@ pub fn resume(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
                 0 => return Err(PauseResumeError::NoTasks),
                 1 => {
                     if let Some(t) = tasks_with_uid.first() {
-                        let resume =
-                            TaskEvent::new(t.name.to_string(), Some(t.id), TaskState::Resumed);
+                        let resume = TaskEvent::new(
+                            t.name.to_string(),
+                            Some(t.id),
+                            None,
+                            TaskState::Resumed,
+                        );
                         return match s.conn.execute(
                             "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5)",
                             params![
@@ -152,9 +164,15 @@ pub fn resume(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
                 }
             }
         }
-        None if task_pauses.len() == 1 || args.all => {
+        None if task_pauses.len() == 1 || args.all && !task_pauses.is_empty() => {
+            let time = Local::now();
             for p in task_pauses {
-                let resume = TaskEvent::new(p.name.to_string(), Some(p.id), TaskState::Resumed);
+                let resume = TaskEvent::new(
+                    p.name.to_string(),
+                    Some(p.id),
+                    Some(time),
+                    TaskState::Resumed,
+                );
                 s.conn
                     .execute(
                         "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -186,9 +204,12 @@ pub fn resume(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
 mod test {
     use crate::{
         commands::{
-            pause::PauseResumeError, sessions::sessions, stop::stop, test::start_with_name,
+            pause::PauseResumeError,
+            sessions::sessions,
+            stop::{stop, StopOpts},
+            test::start_with_name,
         },
-        Config, ShiftDb, TaskEvent, TaskSession,
+        Config, ShiftDb,
     };
 
     use super::{pause, resume};
@@ -203,7 +224,7 @@ mod test {
 
         pause(&s, &config).expect("Can pause task");
         resume(&s, &config).expect("Can resume paused task");
-        stop(&s, &config).expect("Can stop after break");
+        stop(&s, &StopOpts::default()).expect("Can stop after break");
     }
 
     #[test]
@@ -218,7 +239,11 @@ mod test {
 
         pause(&s, &config).expect("Can pause task");
         resume(&s, &config).expect("Can resume resume task");
-        stop(&s, &config).expect("Can stop after break");
+        let opts = StopOpts {
+            uid: Some("task2".to_string()),
+            ..Default::default()
+        };
+        stop(&s, &opts).expect("Can stop after break");
 
         let config = Config {
             count: 100,
@@ -245,7 +270,11 @@ mod test {
 
         pause(&s, &config).expect("Can pause task");
         resume(&s, &config).expect("Can resume resume task");
-        stop(&s, &config).expect("Can stop after break");
+        let opts = StopOpts {
+            uid: Some(task1.session.to_string()),
+            ..Default::default()
+        };
+        stop(&s, &opts).expect("Can stop after break");
 
         let config = Config {
             count: 100,
@@ -267,19 +296,12 @@ mod test {
             ..Default::default()
         };
         pause(&s, &config).expect("Can pause all task");
-        assert_eq!(
-            s.ongoing_sessions()
-                .iter()
-                .filter(|s| s.is_paused())
-                .count(),
-            100
-        );
+        let o = s.ongoing_sessions();
+        assert_eq!(o.iter().filter(|s| s.is_paused()).count(), 100);
         resume(&s, &config).expect("Can resume resume all task");
+        let o = s.ongoing_sessions();
         assert_eq!(
-            s.ongoing_sessions()
-                .iter()
-                .filter(|s| s.is_paused())
-                .count(),
+            o.iter().filter(|s| s.is_paused()).count(),
             0,
             "Stopped all tasks"
         );
