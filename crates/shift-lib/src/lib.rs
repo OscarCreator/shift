@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display, path::Path, str::FromStr};
 
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Local, TimeDelta};
 use rusqlite::{
     types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef},
     Connection, Row, ToSql,
@@ -49,11 +49,12 @@ impl FromSql for TaskState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskEvent {
+    // TODO: have Uuid here as type
     pub(crate) id: String,
     pub name: String,
     pub(crate) session: String,
     pub state: TaskState,
-    pub time: DateTime<Utc>,
+    pub time: DateTime<Local>,
 }
 
 impl TaskEvent {
@@ -77,7 +78,15 @@ impl TaskEvent {
 
 impl Display for TaskEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        write!(
+            f,
+            "{} {} {} {}",
+            self.id.get(self.id.len() - 8..).expect(""),
+            self.name,
+            self.state,
+            self.time
+        )?;
+        Ok(())
     }
 }
 
@@ -99,7 +108,7 @@ impl<'a> TryFrom<&Row<'a>> for TaskEvent {
 pub struct TaskSession {
     pub(crate) id: Uuid,
     pub name: String,
-    // Should be events starting from latest start and onwards
+    /// Events starting from latest backwards in time to a start event
     pub events: Vec<TaskEvent>,
 }
 
@@ -112,41 +121,126 @@ impl TaskSession {
         }
         false
     }
+
+    fn state(&self) -> &TaskState {
+        if let Some(e) = self.events.first() {
+            &e.state
+        } else {
+            &TaskState::Stopped
+        }
+    }
+
+    // TODO get all time diffs between events and then validate?
+    fn get_times(&self) -> (TimeDelta, TimeDelta) {
+        let mut elapsed = TimeDelta::zero();
+        let mut pause_time = TimeDelta::zero();
+        let mut previous: Option<&TaskEvent> = None;
+        for e in &self.events {
+            match e.state {
+                TaskState::Started => {
+                    // previous can be empty or pause
+                    if let Some(p) = previous {
+                        match p.state {
+                            TaskState::Stopped => {
+                                assert_eq!(
+                                    self.events.len(),
+                                    2,
+                                    "Start + Stop event should be exactly two {:?}",
+                                    &self
+                                );
+                                return (p.time.signed_duration_since(e.time), TimeDelta::zero());
+                            }
+                            TaskState::Paused => {
+                                elapsed += p.time.signed_duration_since(e.time);
+                            }
+                            TaskState::Started => {
+                                panic!("Found more than one start event in session: {:?}", &self)
+                            }
+                            TaskState::Resumed => panic!(
+                                "Resume event not possible to be after start event: {:?}",
+                                &self
+                            ),
+                        }
+                    } else {
+                        return (
+                            Local::now().signed_duration_since(e.time),
+                            TimeDelta::zero(),
+                        );
+                    }
+                }
+                TaskState::Stopped => {
+                    assert_eq!(
+                        previous, None,
+                        "Found more than one stop event in session: {:?}",
+                        &self
+                    );
+                }
+                TaskState::Paused => {
+                    if let Some(p) = previous {
+                        // could be either started or previous pause
+                        match p.state {
+                            TaskState::Resumed => {
+                                pause_time += p.time.signed_duration_since(e.time);
+                            }
+                            TaskState::Started => {
+                                elapsed += p.time.signed_duration_since(e.time);
+                            }
+                            TaskState::Stopped => {
+                                panic!(
+                                    "Pause event not possible to be after stop event: {:?}",
+                                    &self
+                                )
+                            }
+                            TaskState::Paused => {
+                                panic!("Found two pause events after each other: {:?}", &self)
+                            }
+                        }
+                    } else {
+                        pause_time += Local::now().signed_duration_since(e.time);
+                    }
+                }
+                TaskState::Resumed => {
+                    if let Some(p) = previous {
+                        assert_eq!(
+                            p.state,
+                            TaskState::Paused,
+                            "Resume event only allowed after pause event: {p:?}"
+                        );
+                        // Pause time not added
+                        pause_time += p.time.signed_duration_since(e.time);
+                    } else {
+                        // add from now to pause start
+                        elapsed += Local::now().signed_duration_since(e.time);
+                    }
+                }
+            }
+            previous = Some(e);
+        }
+        (elapsed, pause_time)
+    }
 }
 
-// TODO cli part should handle this
+// TODO cli part should handle this?
 impl Display for TaskSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)?;
-        //f.write_str(
-        //    self.id
-        //        .get(self.id.len() - 7..)
-        //        .expect("Could not get subslice of uuid"),
-        //)?;
-        //f.write_str("  ")?;
-        //self.start.naive_local().date().fmt(f)?;
-        //f.write_str(" ")?;
-        //self.start.naive_local().format("%H:%M:%S").fmt(f)?;
-        //if let Some(stop_time) = self.stop {
-        //    f.write_str(" to ")?;
-        //    if self.start.naive_local().date() != stop_time.naive_local().date() {
-        //        stop_time.naive_local().date().fmt(f)?;
-        //        f.write_str(" ")?;
-        //    }
-        //    stop_time.naive_local().format("%H:%M:%S").fmt(f)?;
-        //    f.write_str("  ")?;
-        //    let duration = stop_time - self.start;
-        //    if duration.num_hours() != 0 {
-        //        f.write_fmt(format_args!("{}h ", duration.num_hours()))?;
-        //    }
-        //    if duration.num_minutes() % 60 != 0 || duration.num_hours() != 0 {
-        //        f.write_fmt(format_args!("{}m ", duration.num_minutes() % 60))?;
-        //    }
-        //    f.write_fmt(format_args!("{}s", duration.num_seconds() % 60))?;
-        //}
-
-        //f.write_str("  ")?;
-        //f.write_str(&self.name)?;
+        let current_state = self.state();
+        let (elapsed_time, pause_time) = self.get_times();
+        write!(
+            f,
+            "{} {} {}h {}min elapsed",
+            self.name,
+            current_state,
+            elapsed_time.num_hours(),
+            elapsed_time.num_minutes() % 60
+        )?;
+        if !pause_time.is_zero() {
+            write!(
+                f,
+                "\t{}h {}min paused",
+                pause_time.num_hours(),
+                pause_time.num_minutes() % 60
+            )?;
+        };
         Ok(())
     }
 }

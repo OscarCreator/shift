@@ -9,8 +9,6 @@ use crate::{ShiftDb, TaskEvent, TaskSession, TaskState};
 pub enum Error {
     #[error("Could not decide which task stop from {0:?}")]
     MultipleSessions(Vec<TaskSession>),
-    #[error("Expected to update one task but updated {count} rows for {task}")]
-    UpdateError { count: usize, task: TaskEvent },
     #[error("Could not find any tasks to stop")]
     NoTasks,
 }
@@ -47,20 +45,19 @@ pub fn stop(s: &ShiftDb, args: &StopOpts) -> Result<(), Error> {
                         args.stop_time,
                         TaskState::Stopped,
                     );
-                    return match s
+
+                    let update_count = s
                         .conn
                         .execute(
                             "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5)",
                             params![stop.id, stop.name, stop.session, stop.state, stop.time],
                         )
-                        .expect("SQL statement is vaild")
-                    {
-                        1 => Ok(()),
-                        c => Err(Error::UpdateError {
-                            count: c,
-                            task: stop.clone(),
-                        }),
-                    };
+                        .expect("SQL statement is vaild");
+                    assert_eq!(
+                        update_count, 1,
+                        "tried inserting one event but {} was inserted",
+                        update_count
+                    );
                 }
                 2.. => {
                     return Err(Error::MultipleSessions(ongoing_with_uid));

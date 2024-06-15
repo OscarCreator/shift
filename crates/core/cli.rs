@@ -79,24 +79,43 @@ pub(crate) struct LogArgs {
     #[arg(short, long)]
     pub(crate) json: bool,
 
-    /// Show all tasks
+    /// Show all task events
     #[arg(short, long)]
     pub(crate) all: bool,
 }
 
 #[derive(Args)]
 pub(crate) struct SwitchArgs {
+    // TODO be able to switch from/to multiple?
+    /// Name of task to switch to
+    #[arg(short, long)]
     pub(crate) uid: String,
 }
 
 #[derive(Args)]
 pub(crate) struct PauseArgs {
+    /// Name of task to pause
+    #[arg(short, long)]
     pub(crate) uid: Option<String>,
+    /// Pause all ongoing tasks
+    #[arg(short, long)]
     pub(crate) all: bool,
+
+    /// Time to pause task
+    #[arg(long)]
+    pub(crate) at: Option<String>,
 }
 
 #[derive(Args)]
 pub(crate) struct ResumeArgs {
+    /// Name of task to resume
+    #[arg(short, long)]
     pub(crate) uid: Option<String>,
+    /// Resume all paused tasks
+    #[arg(short, long)]
     pub(crate) all: bool,
+
+    /// Time to resume task
+    #[arg(long)]
+    pub(crate) at: Option<String>,
 }

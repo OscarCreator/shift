@@ -40,6 +40,7 @@ impl Display for PauseResumeError {
     }
 }
 
+// TODO allow for --at pause command
 pub fn pause(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
     let ongoing = s
         .ongoing_sessions()
@@ -111,6 +112,7 @@ pub fn pause(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
     Ok(())
 }
 
+// TODO allow for --at resume command
 pub fn resume(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
     let task_pauses = s
         .ongoing_sessions()

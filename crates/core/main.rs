@@ -3,8 +3,8 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use shift_lib::{
     commands::{
+        event::{self, events},
         pause::{pause, resume},
-        sessions::sessions,
         start::{start, StartOpts},
         status::status,
         stop::{self, stop, StopOpts},
@@ -41,6 +41,7 @@ fn main() {
                 uid: None,
                 ..Default::default()
             };
+            // TODO add json support
             status(&shift, &config).unwrap_or_else(|err| {
                 eprintln!("{err}");
                 std::process::exit(1);
@@ -76,9 +77,6 @@ fn main() {
                         }
                         eprintln!("Multiple tasks started. Need to specify a unique task or uuid");
                     }
-                    stop::Error::UpdateError { count: _, task } => {
-                        eprintln!("Could not update ongoing task with name: {} ", task.name);
-                    }
                     stop::Error::NoTasks => {
                         eprintln!("No tasks to stop");
                     }
@@ -100,15 +98,13 @@ fn main() {
                 })
             });
 
-            let tasks = sessions(
+            let tasks = events(
                 &shift,
-                &Config {
+                &event::Opts {
                     from: from_time,
                     to: to_time,
                     tasks: args.task.clone(),
-                    count: args.count,
-                    all: args.all,
-                    ..Default::default()
+                    count: if args.all { None } else { Some(args.count) },
                 },
             )
             .unwrap_or_else(|err| {

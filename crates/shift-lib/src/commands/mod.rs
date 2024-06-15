@@ -1,5 +1,6 @@
+pub mod event;
 pub mod pause;
-pub mod sessions;
+pub(crate) mod sessions;
 pub mod start;
 pub mod status;
 pub mod stop;

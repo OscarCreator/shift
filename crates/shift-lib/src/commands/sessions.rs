@@ -1,64 +1,33 @@
 use std::{collections::HashMap, str::FromStr};
 
-use rusqlite::{params, Row};
 use uuid::Uuid;
 
 use crate::{Config, ShiftDb, TaskEvent, TaskSession};
 
+use crate::commands::event;
+
 /// Retrieve the tasks from the database
 // TODO change return type from Vec to IntoIterator
-pub fn sessions(s: &ShiftDb, args: &Config) -> anyhow::Result<Vec<TaskSession>> {
-    let row_to_events = |row: &Row<'_>| TaskEvent::try_from(row);
-    let mut stmt;
-    let events = match (args.to, args.from) {
-        (Some(to_date), Some(from_date)) => {
-            let query =
-                "SELECT * FROM task_events WHERE time > ?1 and time < ?2 ORDER BY time DESC";
-            stmt = s.conn.prepare(query)?;
-            if args.all || !args.tasks.is_empty() {
-                stmt.query_map(params![from_date, to_date], row_to_events)?
-            } else {
-                stmt.query_map(params![from_date, to_date], row_to_events)?
-            }
-        }
-        (None, Some(from_date)) => {
-            let query = "SELECT * FROM task_events WHERE time > ? ORDER BY time DESC";
-            stmt = s.conn.prepare(query)?;
-            if args.all || !args.tasks.is_empty() {
-                stmt.query_map(params![from_date], row_to_events)?
-            } else {
-                stmt.query_map(params![from_date], row_to_events)?
-            }
-        }
-        (Some(to_date), None) => {
-            let query = "SELECT * FROM task_events WHERE time < ? ORDER BY time DESC";
-            stmt = s.conn.prepare(query)?;
-            if args.all || !args.tasks.is_empty() {
-                stmt.query_map(params![to_date], row_to_events)?
-            } else {
-                stmt.query_map(params![to_date], row_to_events)?
-            }
-        }
-        (None, None) => {
-            let query = "SELECT * FROM task_events ORDER BY time DESC";
-            stmt = s.conn.prepare(query)?;
-            stmt.query_map([], row_to_events)?
-        }
-    };
+pub(crate) fn sessions(s: &ShiftDb, args: &Config) -> anyhow::Result<Vec<TaskSession>> {
+    let events = event::events(
+        &s,
+        &event::Opts {
+            count: None, /* TODO: this is bad */
+            from: args.from,
+            to: args.to,
+            tasks: args.tasks.clone(),
+        },
+    )?;
 
     // get events for all those sessions and insert them into the sesssion structs
     let mut session_map = HashMap::<(String, String), Vec<TaskEvent>>::new();
     for e in events {
-        let event = e.expect("Database corrupt, could not parse event from database");
         if let Some(session_events) =
-            session_map.get_mut(&(event.name.to_string(), event.session.to_string()))
+            session_map.get_mut(&(e.name.to_string(), e.session.to_string()))
         {
-            session_events.push(event);
+            session_events.push(e);
         } else {
-            session_map.insert(
-                (event.name.to_string(), event.session.to_string()),
-                vec![event],
-            );
+            session_map.insert((e.name.to_string(), e.session.to_string()), vec![e]);
         }
     }
     let mut iter = session_map
