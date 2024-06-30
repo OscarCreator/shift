@@ -3,14 +3,15 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use shift_lib::{
     commands::{
-        event::{self, events},
+        event,
+        events::{self, events},
         pause::{pause, resume},
         start::{start, StartOpts},
         status::status,
         stop::{self, stop, StopOpts},
         undo::{self, undo},
     },
-    Config,
+    Config, TaskEvent,
 };
 use std::{env::var, fs, io::Write, path::Path};
 
@@ -23,7 +24,7 @@ fn main() {
     let cli = Cli::parse();
 
     let config_home = var("XDG_CONFIG_HOME")
-        .or_else(|_| var("HOME").map(|home| format!("{}/.config/st", home)))
+        .or_else(|_| var("HOME").map(|home| format!("{}/.local/share/st", home)))
         .unwrap_or_else(|_| {
             eprintln!("XDG_CONFIG_HOME or HOME environment variable not found");
             std::process::exit(1);
@@ -100,7 +101,7 @@ fn main() {
 
             let tasks = events(
                 &shift,
-                &event::Opts {
+                &events::Opts {
                     from: from_time,
                     to: to_time,
                     tasks: args.task.clone(),
@@ -185,6 +186,35 @@ fn main() {
                 eprintln!("{err}");
                 std::process::exit(1);
             });
+        }
+        Commands::Edit(args) => {
+            // get event, default latest otherwise by uid
+            let event = event::event(
+                &shift,
+                &event::Opts {
+                    uid: args.uid.to_owned(),
+                },
+            )
+            .unwrap_or_else(|err| {
+                eprintln!("{err}");
+                std::process::exit(1);
+            });
+
+            let res = edit::edit(
+                serde_json::to_string_pretty(&event)
+                    .expect("Default impl of serialize should not fail"),
+            )
+            .unwrap_or_else(|err| {
+                eprintln!("{err}");
+                std::process::exit(1);
+            });
+
+            let updated_event: TaskEvent = serde_json::from_str(&res).unwrap();
+            // TODO validate so it does not break anything
+            event::update(&shift, event, updated_event).unwrap_or_else(|err| {
+                eprintln!("{err}");
+                std::process::exit(1);
+            })
         }
     }
 }

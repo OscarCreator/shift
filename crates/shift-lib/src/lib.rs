@@ -47,11 +47,14 @@ impl FromSql for TaskState {
     }
 }
 
+// TODO should this be a pub(crate) type and then expose a type with only public fields?
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskEvent {
     // TODO: have Uuid here as type
+    #[serde(skip_serializing, skip_deserializing)]
     pub(crate) id: String,
     pub name: String,
+    #[serde(skip_serializing, skip_deserializing)]
     pub(crate) session: String,
     pub state: TaskState,
     pub time: DateTime<Local>,

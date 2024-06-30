@@ -4,14 +4,14 @@ use uuid::Uuid;
 
 use crate::{Config, ShiftDb, TaskEvent, TaskSession};
 
-use crate::commands::event;
+use crate::commands::events;
 
 /// Retrieve the tasks from the database
 // TODO change return type from Vec to IntoIterator
 pub(crate) fn sessions(s: &ShiftDb, args: &Config) -> anyhow::Result<Vec<TaskSession>> {
-    let events = event::events(
+    let events = events::events(
         &s,
-        &event::Opts {
+        &events::Opts {
             count: None, /* TODO: this is bad */
             from: args.from,
             to: args.to,

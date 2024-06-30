@@ -3,7 +3,7 @@
 shift is a time tracker written in Rust and designed to be simple but effective
 to use for tracking time between projects. Simply start a task with `st start task1`
 and once finished use `st stop`. shift stores each of these events in a sqlite3 database
-which is by default located at `$XDG_CONFIG_HOME/.config/st/events.db` or `$HOME/.config.st/events.db`.
+which is by default located at `$XDG_CONFIG_HOME/.local/share/st/events.db` or `$HOME/.local/share/st/events.db`.
 
 
 ### Installation

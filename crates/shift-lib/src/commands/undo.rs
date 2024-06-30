@@ -33,7 +33,8 @@ mod test {
         commands::{
             pause::{pause, resume},
             sessions::sessions,
-            start::{start, StartOpts},
+            start::start,
+            start::StartOpts,
             stop::{self, stop, StopOpts},
             test::start_with_name,
             undo,

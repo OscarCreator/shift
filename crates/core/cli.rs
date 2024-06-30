@@ -21,13 +21,17 @@ pub(crate) enum Commands {
     /// Switch to another task
     Switch(SwitchArgs),
     /// TODO
-    Remove { uid: String },
+    Remove {
+        uid: String,
+    },
     /// Pause a ongoing task
     Pause(PauseArgs),
     /// Resume a paused task
     Resume(ResumeArgs),
     /// Undo latest command
     Undo,
+
+    Edit(EditArgs),
 }
 
 #[derive(Args)]
@@ -88,14 +92,12 @@ pub(crate) struct LogArgs {
 pub(crate) struct SwitchArgs {
     // TODO be able to switch from/to multiple?
     /// Name of task to switch to
-    #[arg(short, long)]
     pub(crate) uid: String,
 }
 
 #[derive(Args)]
 pub(crate) struct PauseArgs {
     /// Name of task to pause
-    #[arg(short, long)]
     pub(crate) uid: Option<String>,
     /// Pause all ongoing tasks
     #[arg(short, long)]
@@ -109,7 +111,6 @@ pub(crate) struct PauseArgs {
 #[derive(Args)]
 pub(crate) struct ResumeArgs {
     /// Name of task to resume
-    #[arg(short, long)]
     pub(crate) uid: Option<String>,
     /// Resume all paused tasks
     #[arg(short, long)]
@@ -118,4 +119,9 @@ pub(crate) struct ResumeArgs {
     /// Time to resume task
     #[arg(long)]
     pub(crate) at: Option<String>,
+}
+
+#[derive(Args)]
+pub(crate) struct EditArgs {
+    pub(crate) uid: Option<String>,
 }

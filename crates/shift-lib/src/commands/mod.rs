@@ -1,4 +1,5 @@
 pub mod event;
+pub mod events;
 pub mod pause;
 pub(crate) mod sessions;
 pub mod start;
