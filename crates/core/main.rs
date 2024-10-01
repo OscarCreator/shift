@@ -123,7 +123,7 @@ fn main() {
                     tasks,
                     &EventStatOpts {
                         from: from_time.expect("No from time"),
-                        to: to_time.expect("No to time"),
+                        to: to_time.unwrap_or_else(|| Local::now()),
                     },
                 );
                 for s in sessions {
