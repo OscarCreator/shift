@@ -4,7 +4,7 @@ use cli::{Cli, Commands};
 use shift_lib::{
     commands::{
         event,
-        events::{self, events},
+        events::{self, event_stats, events, EventStatOpts},
         pause::{pause, resume},
         start::{start, StartOpts},
         status::status,
@@ -43,10 +43,15 @@ fn main() {
                 ..Default::default()
             };
             // TODO add json support
-            status(&shift, &config).unwrap_or_else(|err| {
-                eprintln!("{err}");
-                std::process::exit(1);
-            });
+            let sessions = status(&shift, &config);
+            if sessions.len() == 0 {
+                println!("No ongoing tasks");
+            } else {
+                for ongoing in sessions {
+                    println!("{ongoing}");
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::Start(args) => {
             let start_time = args.at.as_ref().map(|t| {
@@ -113,19 +118,32 @@ fn main() {
                 std::process::exit(1);
             });
 
-            if args.json {
-                let stdout = std::io::stdout();
-                let mut handle = stdout.lock();
-                handle
-                    .write_all(
-                        serde_json::to_string(&tasks)
-                            .expect("could not deserialize tasks")
-                            .as_bytes(),
-                    )
-                    .expect("could not write to stdout");
+            if args.summary {
+                let sessions = event_stats(
+                    tasks,
+                    &EventStatOpts {
+                        from: from_time.expect("No from time"),
+                        to: to_time.expect("No to time"),
+                    },
+                );
+                for s in sessions {
+                    println!("{s}");
+                }
             } else {
-                for task in tasks {
-                    println!("{task}");
+                if args.json {
+                    let stdout = std::io::stdout();
+                    let mut handle = stdout.lock();
+                    handle
+                        .write_all(
+                            serde_json::to_string(&tasks)
+                                .expect("could not deserialize tasks")
+                                .as_bytes(),
+                        )
+                        .expect("could not write to stdout");
+                } else {
+                    for task in tasks {
+                        println!("{task}");
+                    }
                 }
             }
         }

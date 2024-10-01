@@ -86,6 +86,10 @@ pub(crate) struct LogArgs {
     /// Show all task events
     #[arg(short, long)]
     pub(crate) all: bool,
+
+    /// Summarise time for the events
+    #[arg(short, long)]
+    pub(crate) summary: bool,
 }
 
 #[derive(Args)]

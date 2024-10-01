@@ -64,16 +64,10 @@ pub fn pause(s: &ShiftDb, args: &Config) -> Result<(), PauseResumeError> {
                         TaskEvent::new(t.name.to_string(), Some(t.id), None, TaskState::Paused);
                     return match s.conn.execute(
                         "INSERT INTO task_events VALUES (?1, ?2, ?3, ?4, ?5)",
-                        params![
-                            pause.id.to_string(),
-                            pause.name,
-                            pause.session.to_string(),
-                            pause.state,
-                            pause.time
-                        ],
+                        params![pause.id, pause.name, pause.session, pause.state, pause.time],
                     ) {
                         Ok(1) => Ok(()),
-                        Ok(count) => Err(PauseResumeError::UpdateError(t.clone())),
+                        Ok(_count) => Err(PauseResumeError::UpdateError(t.clone())),
                         Err(err) => Err(PauseResumeError::SqlError(err.to_string())),
                     };
                 }
