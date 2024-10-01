@@ -138,7 +138,10 @@ impl TaskSession {
         let mut elapsed = TimeDelta::zero();
         let mut pause_time = TimeDelta::zero();
         let mut previous: Option<&TaskEvent> = None;
-        for e in &self.events {
+
+        let mut events = self.events.clone();
+        events.reverse();
+        for e in &events {
             match e.state {
                 TaskState::Started => {
                     // previous can be empty or pause
@@ -189,10 +192,7 @@ impl TaskSession {
                                 elapsed += p.time.signed_duration_since(e.time);
                             }
                             TaskState::Stopped => {
-                                panic!(
-                                    "Pause event not possible to be after stop event: {:?}",
-                                    &self
-                                )
+                                pause_time += p.time.signed_duration_since(e.time);
                             }
                             TaskState::Paused => {
                                 panic!("Found two pause events after each other: {:?}", &self)

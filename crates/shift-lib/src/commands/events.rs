@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use chrono::{DateTime, Local};
-use rusqlite::{params, version, Row};
+use rusqlite::{params, Row};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -79,7 +79,7 @@ pub fn event_stats(mut events: Vec<TaskEvent>, opts: &EventStatOpts) -> Vec<Task
                             name: event.name.to_string(),
                             events: vec![
                                 TaskEvent::new(
-                                    Uuid::now_v7().to_string(),
+                                    event.name.to_string(),
                                     Some(
                                         Uuid::from_str(&event.session)
                                             .expect("Could not deserialize session id as an uuid"),
@@ -104,7 +104,7 @@ pub fn event_stats(mut events: Vec<TaskEvent>, opts: &EventStatOpts) -> Vec<Task
     loop {
         if let Some(mut s) = partial_sessions.pop() {
             s.events.push(TaskEvent::new(
-                Uuid::now_v7().to_string(),
+                s.name.to_string(),
                 Some(
                     Uuid::from_str(
                         &s.events
@@ -114,7 +114,7 @@ pub fn event_stats(mut events: Vec<TaskEvent>, opts: &EventStatOpts) -> Vec<Task
                     )
                     .expect("Could not deserialize session id as an uuid"),
                 ),
-                Some(opts.to),
+                Some(Local::now()),
                 TaskState::Stopped,
             ));
             sessions.push(s);
