@@ -126,7 +126,7 @@ impl TaskSession {
     }
 
     fn state(&self) -> &TaskState {
-        if let Some(e) = self.events.first() {
+        if let Some(e) = self.events.last() {
             &e.state
         } else {
             &TaskState::Stopped

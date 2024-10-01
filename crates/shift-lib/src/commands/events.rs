@@ -102,21 +102,7 @@ pub fn event_stats(mut events: Vec<TaskEvent>, opts: &EventStatOpts) -> Vec<Task
     }
 
     loop {
-        if let Some(mut s) = partial_sessions.pop() {
-            s.events.push(TaskEvent::new(
-                s.name.to_string(),
-                Some(
-                    Uuid::from_str(
-                        &s.events
-                            .first()
-                            .expect("Should have atleast one event in session")
-                            .session,
-                    )
-                    .expect("Could not deserialize session id as an uuid"),
-                ),
-                Some(Local::now()),
-                TaskState::Stopped,
-            ));
+        if let Some(s) = partial_sessions.pop() {
             sessions.push(s);
         } else {
             break;
